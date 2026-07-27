@@ -80,3 +80,28 @@ def test_se_hash_identical(script_encoding_pretokenizer):
 
 def test_se_can_json(script_encoding_pretokenizer):
     export_pretokenizer(script_encoding_pretokenizer)
+
+
+def test_split_line_breaks_variant():
+    # scriptenc_cb_nl: a newline-to-space transition always breaks a group, so
+    # indentation stays compositional (the mingram MBPP-collapse fix); the base
+    # scriptenc_cb variant is unchanged and still fuses "\n" with indentation.
+    fixed = get_pretokenizer("scriptenc_cb_nl")
+    base = get_pretokenizer("scriptenc_cb")
+    text = "\n    return x"
+
+    fixed_groups = [fixed.decode(g) for g in fixed.pretokenize(text)]
+    base_groups = [base.decode(g) for g in base.pretokenize(text)]
+    assert fixed_groups[0] == "\n" and fixed_groups[1] == "    ", fixed_groups
+    assert base_groups[0] == "\n    ", base_groups
+
+    # Pure runs still group under the fixed variant: blank lines and indentation
+    # depth tokens are preserved; only the transition splits.
+    assert [fixed.decode(g) for g in fixed.pretokenize("\n\n")][0] == "\n\n"
+    assert [fixed.decode(g) for g in fixed.pretokenize("a  b")][1] == "  "
+
+    # Lossless round-trip for both variants on a CRLF/indented mixed sample.
+    sample = "def f(x):\r\n    return x\n\n你好 नमस्ते"
+    for p in (fixed, base):
+        ids = sum(p.pretokenize(sample), token_array([]))
+        assert p.decode(ids) == sample
