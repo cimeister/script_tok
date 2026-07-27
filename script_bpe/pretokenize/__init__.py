@@ -46,6 +46,7 @@ PRETOKENIZER_REGISTRY: dict[str, PretokenizerConfig] = {
     "bytes_gpt4_cbi": UTF8PretokenizerConfig(regex_pattern=GPT4_REGEX, enforce_inherited=True),
     "scriptenc": ScriptPretokenizerConfig(enforce_char_boundaries=False),
     "scriptenc_cb": ScriptPretokenizerConfig(),
+    "scriptenc_cb_nl": ScriptPretokenizerConfig(split_line_breaks=True),
     "scriptenc_cbi": ScriptPretokenizerConfig(enforce_inherited=True),
     "scriptenc_gpt4o": ScriptPretokenizerConfig(
         regex_pattern=GPT4O_REGEX, script_split=False, enforce_char_boundaries=False
