@@ -37,16 +37,23 @@ class UTF8PretokenizerConfig(PretokenizerConfig):
 class ScriptPretokenizerConfig(PretokenizerConfig):
     cls: str = "ScriptPretokenizer"
     script_split: bool = True
+    # When True, a newline/carriage-return never groups with adjacent non-line-break chars
+    # of the same script block (e.g. the whitespace/control block that \n, \t and space all
+    # share), so "\n    " is not fused into a single pretoken with its indentation. Runs of
+    # pure line breaks still merge with each other, and runs of pure spaces still merge with
+    # each other. Default off: every existing registry entry is byte-identical.
+    split_line_breaks: bool = False
 
 
 class ScriptCharEnc:
-    __slots__ = ("script_id", "combines_with_spaces", "atomic_token_ids", "inherited")
+    __slots__ = ("script_id", "combines_with_spaces", "atomic_token_ids", "inherited", "is_line_break")
 
-    def __init__(self, block: ScriptBlock, token_pair: TokenPairT):
+    def __init__(self, block: ScriptBlock, token_pair: TokenPairT, char: str):
         self.script_id = block.script_id
         self.combines_with_spaces = block.combines_with_spaces
         self.atomic_token_ids = token_pair
         self.inherited = block.script == "Inherited"
+        self.is_line_break = char in ("\n", "\r")
 
     def __repr__(self):
         return f"ScriptCharEnc(script_id={self.script_id}, atomic_token_ids={self.atomic_token_ids})"
@@ -258,6 +265,7 @@ class ScriptPretokenizer(Pretokenizer, config_type=ScriptPretokenizerConfig):
             raise ValueError("script_split and regex_pattern should probably not be used together")
         super().__init__(config)
         self._script_split: bool = config.script_split
+        self._split_line_breaks: bool = config.split_line_breaks
         self.space_group = self.encode_text(" ")
 
     def _build_atomic_tokens(self):
@@ -272,7 +280,7 @@ class ScriptPretokenizer(Pretokenizer, config_type=ScriptPretokenizerConfig):
             for i, c in enumerate(block.chars):
                 token_pair = (block_token, index_tokens[i])
                 self.detokenize_map[token_pair] = c
-                self.char_encoding[c] = ScriptCharEnc(block, token_pair)
+                self.char_encoding[c] = ScriptCharEnc(block, token_pair, c)
 
     def decode(self, tokenization: InputTokenSeq, errors="replace") -> str:
         decoded = ""
@@ -311,15 +319,25 @@ class ScriptPretokenizer(Pretokenizer, config_type=ScriptPretokenizerConfig):
         script_encoding = [c for c in encoding if isinstance(c, ScriptCharEnc)]
         if len(script_encoding) != len(encoding):
             raise ValueError(f"Unexpected encoding: {encoding}")
+        # group_key also carries is_line_break when split_line_breaks is set, so that a
+        # newline/CR never groups with same-script non-line-break chars (e.g. \n vs the
+        # following indentation spaces, which otherwise share one script block). This key
+        # must be used consistently below (grouping AND the merge-absorption check), since
+        # the merge loop's script_id-only comparison would otherwise re-absorb the split
+        # groups and silently undo the finer split.
+        if self._split_line_breaks:
+            group_key = lambda x: (x.script_id, x.is_line_break)
+        else:
+            group_key = lambda x: x.script_id
         script_groups: list[list[ScriptCharEnc]] = [
-            list(g) for _, g in itertools.groupby(script_encoding, key=lambda x: x.script_id)
+            list(g) for _, g in itertools.groupby(script_encoding, key=group_key)
         ]
 
         merged_groups: list[Sequence[CharEncT]] = []
         i = 0
         while i < len(script_groups) - 1:
             current_group, next_group = script_groups[i], script_groups[i + 1]
-            current_script, next_script = current_group[0].script_id, next_group[0].script_id
+            current_script, next_script = group_key(current_group[0]), group_key(next_group[0])
             if next_group[0].combines_with_spaces and current_group == space_group:
                 merged_group = current_group + next_group
                 current_script = next_script
@@ -328,7 +346,7 @@ class ScriptPretokenizer(Pretokenizer, config_type=ScriptPretokenizerConfig):
                 merged_group = current_group
                 i += 1
             while i < len(script_groups) and (
-                script_groups[i][0].inherited or script_groups[i][0].script_id == current_script
+                script_groups[i][0].inherited or group_key(script_groups[i][0]) == current_script
             ):
                 merged_group += script_groups[i]
                 i += 1
