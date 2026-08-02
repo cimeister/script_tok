@@ -6,6 +6,8 @@
 %   \usepackage{booktabs}
 % Requires in the bibliography:
 %   li2024datacomplm   (DCLM, for the CORE metric)
+% Set \downstreamdir to this directory relative to your main .tex before \input-ing
+% (LaTeX resolves \input relative to the main document, not to this file).
 % Reads: generated/downstream_tables.tex, which make_tex_tables.py writes from
 %   marker_experiments/downstream/{manifest,results,text_stats}.* and must not be hand-edited.
 %
@@ -33,7 +35,8 @@ smaller than the headline FineWiki figure.
 Models are nanochat at depth 12 on ClimbMix, scored on validation bits-per-byte and on DCLM
 CORE \citep{li2024datacomplm}, in Table~\ref{tab:downstream-lm}.
 
-\input{generated/downstream_tables}
+\providecommand{\downstreamdir}{.}
+\input{\downstreamdir/generated/downstream_tables}
 
 All three boundary arms reach lower bits-per-byte than the baseline. Because the seeds are
 paired across arms, the differences are paired: \texttt{plain} minus \bnd{w} is

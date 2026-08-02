@@ -453,12 +453,15 @@ does not substitute for the right boundary set: sweeping the BPE-initialisation 
 gap from $-7.83\%$ to $-7.95\%$, so a 2.5$\times$ larger pool buys 290 words and makes
 compression marginally worse.
 
-\input{downstream_section}
+% The downstream section lives with the artifacts it is generated from, so it survives
+% this file being replaced. See marker_experiments/downstream/paper/README.md.
+\newcommand{\downstreamdir}{../downstream/paper}
+\input{\downstreamdir/downstream_section}
 
 \section{Limitations}
 \label{sec:limitations}
 
-\input{downstream_limitations}
+\input{\downstreamdir/downstream_limitations}
 
 
 The language-modelling evaluation is confined to English at one model scale, and CORE covers

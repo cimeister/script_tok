@@ -2,7 +2,7 @@
 """Generate the downstream LaTeX tables from the run artifacts.
 
 Numbers in the paper are not transcribed by hand. This reads the two artifacts the
-pipeline writes and emits the table bodies that acl_latex.tex \\input{}s:
+pipeline writes and emits the table bodies that paper/downstream_section.tex \\input{}s:
 
     manifest.json   one entry per trained tokenizer (train_matched.py / merge_manifests.py)
     results.tsv     one row per downstream run    (collect_results.py)
@@ -23,7 +23,7 @@ import cyclopts
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
-DEFAULT_OUT = os.path.join(REPO, "marker_experiments", "paper", "generated", "downstream_tables.tex")
+DEFAULT_OUT = os.path.join(HERE, "paper", "generated", "downstream_tables.tex")
 
 # Presentation order, and the label each arm carries in the paper.
 ARM_ORDER = ["plain", "bnd_w", "bnd_wp", "bnd_wpd", "bnd_wpd_caps"]
@@ -175,7 +175,7 @@ def main(
             at the live $OUT/results.tsv, which is under the gitignored results/ tree.
         text_stats: JSON from measure_text_stats.py, for the text-coverage figures. Same
             convention as `results`.
-        out: LaTeX file to write, \\input{} by the paper.
+        out: LaTeX file to write, \\input{} by paper/downstream_section.tex.
         allow_missing: Emit a placeholder table when an artifact is absent, instead of
             failing. For a sweep in progress, not for a clean clone.
     """
