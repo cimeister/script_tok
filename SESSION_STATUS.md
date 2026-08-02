@@ -1,7 +1,7 @@
 # Session Status
 
 ## Deliverable
-- PR sanderland/script_tok#8, branch claude/downstream-lm-eval on the cimeister fork, into claude/fineweb-space-neighbors-k10ufw. Tables regenerate from artifacts with make_tex_tables.py. The bpb, CORE, chars/token and text-coverage figures are read from artifacts; the eval-slice size and the corpus name in the captions are still literals in the generator.
+- PR sanderland/script_tok#8, branch claude/downstream-lm-eval on the cimeister fork, into claude/fineweb-space-neighbors-k10ufw. The write-up lives in marker_experiments/downstream/paper/ (section, limitations paragraph, generated tables, README), beside the artifacts it is generated from, because marker_experiments/paper/acl_latex.tex and custom.bib are being replaced. Regenerates from a clean clone with make_tex_tables.py and no arguments. The bpb, CORE, chars/token and text-coverage figures are read from artifacts; the eval-slice size and the corpus name in the captions are still literals in the generator.
 
 ## Ongoing experiments
 - Extra seeds for bnd_wpd (jobs 2979301-03, seeds 3,4,5, 8 shards): tests whether the within-arm spread estimated from 3 seeds holds at 6. These cannot sharpen the paired comparison against plain, which needs the same seeds in both arms.
@@ -9,7 +9,7 @@
 - Matched tokenizers: all four trained and merged into manifest.json. plain 3.6360 chars/token, bnd_w 3.0960, bnd_wpd 3.7403, bnd_wpd_caps 3.7456, zero roundtrip failures.
 
 ## Completed
-- Round 3 (jobs 2976849-60): 12/12 clean, results in marker_experiments/downstream/results_round3.tsv and in the paper tables. plain 0.8853, bnd_w 0.8768, bnd_wpd 0.8800, bnd_wpd_caps 0.8795 bpb per true byte.
+- Round 3 (jobs 2976849-60): 12/12 clean, results in marker_experiments/downstream/results.tsv and in the paper tables. plain 0.8853, bnd_w 0.8768, bnd_wpd 0.8800, bnd_wpd_caps 0.8795 bpb per true byte.
 
 ## Discarded rounds, and why (full detail in DESIGN_CHOICES.md)
 - Round 1 (jobs 2972879-90): all 12 runs shared one NANOCHAT_BASE and therefore one token_bytes.pt, so runs were scored against another arm's byte table. Logs in results/marker_downstream/logs_invalid/.
