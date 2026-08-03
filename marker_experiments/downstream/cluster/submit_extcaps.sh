@@ -154,6 +154,16 @@ echo \"[job] node=\$(hostname) cores=\$(nproc) gpus=\$(nvidia-smi -L | wc -l)\"
 echo \"[job] seeds=${TODO[*]} core_safe_arms='${CORE_SAFE_ARMS}' encode_workers=${ENCODE_WORKERS}\"
 uv pip freeze > \"${OUT_DIR}/slurm/\${SLURM_JOB_ID}.freeze\" 2>/dev/null || true
 
+# Count the GPUs on the node that was actually allocated. The submit-side check used a
+# constant, which is the login node's answer to a question only the compute node can
+# settle; two runs handed the same device would not be clean single-GPU replicates.
+NGPU=\$(nvidia-smi --query-gpu=index --format=csv,noheader | wc -l)
+if (( ${#TODO[@]} > NGPU )); then
+  echo \"[pack] refusing: ${#TODO[@]} seeds on a node with \${NGPU} GPU(s)\" >&2
+  exit 1
+fi
+echo \"[job] allocated GPUs: \${NGPU}\"
+
 pids=(); seeds=()
 ${LAUNCH}
 # Report every failure rather than dying on the first, so one bad seed does not hide the
