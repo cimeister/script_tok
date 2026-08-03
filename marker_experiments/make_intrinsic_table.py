@@ -95,7 +95,35 @@ def main_body(table, langs, trainers):
             m = sum(deltas[(tr, arm)]) / len(deltas[(tr, arm)])
             mean.append(f"$\\mathbf{{{m:+.2f}}}$" if arm == "bnd_wpd" and m > 0 else f"${m:+.2f}$")
     lines.append("Mean & " + " & ".join(mean) + r" \\")
-    return lines, mingram_gain
+    ordered = all(
+        table[(lang, "bnd_w", tr)] < table[(lang, "bnd_wp", tr)] < table[(lang, "bnd_wpd", tr)]
+        for lang in langs for tr in trainers
+    )
+    return lines, mingram_gain, ordered
+
+
+def vocabulary_phrase(data, langs, trainers):
+    """How to describe the vocabulary of the cells shown, read from the data.
+
+    The grids do not match on the same quantity. The FineWiki grids fix
+    additional_vocab_size and let the total float; the FineWeb 5 GB grid fixes the total,
+    because vocabulary sets the embedding shape and so the parameter count, and lets the
+    additional float per arm. Naming the wrong one states something false about the
+    tokenizers: writing "32,768 additional vocabulary" over the FineWeb cells is wrong by
+    a couple of hundred entries per arm, and silently so.
+    """
+    shown = [
+        cell for key, cell in data.items()
+        if key.split("_", 1)[0] in langs and any(key.endswith(f"_{tr}") for tr in trainers)
+    ]
+    for field, phrase in (("additional_vocab_size", "additional"), ("vocab_size", "total")):
+        values = {cell[field] for cell in shown if field in cell}
+        if len(values) == 1:
+            return f"{values.pop():,}".replace(",", "{,}") + f" {phrase} vocabulary"
+    raise SystemExit(
+        "neither additional_vocab_size nor vocab_size is constant across the cells shown, "
+        "so no single vocabulary figure describes them; the caption would be false."
+    )
 
 
 @app.default
@@ -128,7 +156,7 @@ def main(
     if not trainers:
         raise SystemExit(f"no trainer in {results} covers a language completely")
     table, langs = _rows(data, trainers)
-    body, mingram_gain = main_body(table, langs, trainers)
+    body, mingram_gain, ordered = main_body(table, langs, trainers)
 
     # One group per trainer, each spanning its baseline plus its three variants.
     width = 1 + len(ARM_ORDER)
@@ -159,13 +187,17 @@ def main(
     caption = (
         r"\caption{Compression, "
         + corpus
-        + r", 32{,}768 additional vocabulary. "
-        r"Baseline is \texttt{plain} in characters per token; each variant is the "
+        + ", "
+        + vocabulary_phrase(data, langs, trainers)
+        + r". Baseline is \texttt{plain} in characters per token; each variant is the "
         r"percentage change against "
         + (r"\emph{its own trainer's} baseline, so the columns ask whether the variant "
            r"ordering survives a change of trainer rather than how the trainers compare. "
            if len(trainers) > 1 else r"that baseline. ")
-        + r"\bnd{w} $<$ \bnd{wp} $<$ \bnd{wpd} in every cell. "
+        # Checked against the numbers rather than asserted. The sentence was previously
+        # printed unconditionally, so a grid that broke the ordering would have shipped a
+        # caption contradicting its own table.
+        + (r"\bnd{w} $<$ \bnd{wp} $<$ \bnd{wpd} in every cell. " if ordered else "")
         + (r"MinGram compresses the baseline better than BPE in every language ("
            + gains + r"), and helps the baseline slightly more than \bnd{wpd}. "
            if len(trainers) > 1 else "")
