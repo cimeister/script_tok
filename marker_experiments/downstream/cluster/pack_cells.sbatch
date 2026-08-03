@@ -30,6 +30,12 @@ set -euo pipefail
 REPO="${REPO:-/users/cmeister747/script_tok}"
 cd "${REPO}"
 source marker_experiments/downstream/cluster/env.sh
+# Pin imports to THIS checkout. The venv installs script_bpe and pynanochat as
+# editable pointers into /users/cmeister747/script_tok, so a job launched from a
+# worktree would otherwise run that tree library code, on whatever branch it happens
+# to be on, with no record of it. Both entries are needed: REPO alone still resolves
+# pynanochat to the main checkout. Harmless when REPO already is the main checkout.
+export PYTHONPATH="${REPO}:${REPO}/eval/py-nanochat:${PYTHONPATH:-}"
 
 : "${CELLS:?set CELLS, space separated lang:arm pairs}"
 # Required, not defaulted. A silent fallback to bpe here would run the wrong
@@ -44,7 +50,7 @@ WORKERS="${WORKERS:-$(( (CORES - 8) / NCELLS ))}"
 echo "[pack] ${SLURM_JOB_ID:-nojob} node=$(hostname) cores=${CORES}"
 echo "[pack] trainer=${TRAINERS}"
 echo "[pack] ${NCELLS} cell(s) at ${WORKERS} workers each: ${CELLS}"
-echo "[pack] commit=$(git rev-parse HEAD)"
+echo "[pack] commit=$(git rev-parse HEAD) repo=${REPO}"
 
 pids=()
 for cell in ${CELLS}; do

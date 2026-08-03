@@ -27,6 +27,8 @@ set -euo pipefail
 REPO="${REPO:-/capstor/scratch/cscs/cmeister747/wt-mingram}"
 cd "${REPO}"
 source marker_experiments/downstream/cluster/env.sh
+# Same reason as pack_cells.sbatch: the editable installs point at the main checkout.
+export PYTHONPATH="${REPO}:${REPO}/eval/py-nanochat:${PYTHONPATH:-}"
 
 : "${ARM:?set ARM (plain or bnd_wpd)}"
 CORPUS="${CORPUS:-fineweb_en_5gb}"
