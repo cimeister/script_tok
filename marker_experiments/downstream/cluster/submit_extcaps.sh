@@ -95,6 +95,14 @@ for seed in "${SEED_LIST[@]}"; do
   TODO+=("$seed")
 done
 if (( ${#TODO[@]} == 0 )); then echo "nothing to do"; exit 0; fi
+# One GPU per seed, one node, so the node's 4 GPUs are the ceiling. Past that the loop
+# below would hand two seeds the same CUDA_VISIBLE_DEVICES and they would share a GPU.
+GPUS_PER_NODE=4
+if (( ${#TODO[@]} > GPUS_PER_NODE )); then
+  echo "refusing to submit: ${#TODO[@]} seeds but only ${GPUS_PER_NODE} GPUs on a node." >&2
+  echo "Run them in batches, or extend this script to allocate more nodes." >&2
+  exit 1
+fi
 echo "-- submitting seeds: ${TODO[*]}"
 
 # Build the concurrent launch block: one run_arms.sh per seed, each pinned to its own GPU.
