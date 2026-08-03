@@ -44,8 +44,22 @@ export PYTHONPATH="${REPO}:${REPO}/eval/py-nanochat:${PYTHONPATH:-}"
 : "${TRAINERS:?set TRAINERS explicitly, bpe or mingram}"
 NCELLS=$(wc -w <<< "${CELLS}")
 CORES=$(nproc)
-# Leave a little headroom so the concurrent parents are not fighting for the last core.
+# Past this many workers a cell gets slower, not faster, so the share-out below is capped.
+# Corpus building alternates parallel encode with a serial merge in the parent, and the
+# parent's work grows with the number of partial counters, which is blocks times workers.
+# More workers therefore shrink the parallel part and grow the serial one.
+#
+# Measured on the 21 cells of the FineWeb 5 GB grid, all building from the same cached
+# sampled text: at 46 workers the median build was 2.66 h, at 56 workers 3.06 to 3.19 h,
+# and one cell given the whole node at 280 workers had not finished after 7 h and was
+# cancelled. The 46-worker pack beat the 56-worker packs while running six cells against
+# five, so the ordering is not a contention artefact.
+MAX_WORKERS_PER_CELL=48
 WORKERS="${WORKERS:-$(( (CORES - 8) / NCELLS ))}"
+if (( WORKERS > MAX_WORKERS_PER_CELL )); then
+  echo "[pack] capping ${WORKERS} workers per cell at ${MAX_WORKERS_PER_CELL}; see the note above"
+  WORKERS=${MAX_WORKERS_PER_CELL}
+fi
 
 echo "[pack] ${SLURM_JOB_ID:-nojob} node=$(hostname) cores=${CORES}"
 echo "[pack] trainer=${TRAINERS}"
