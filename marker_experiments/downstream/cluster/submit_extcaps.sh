@@ -30,6 +30,8 @@ ARM=${ARM:-bnd_wpd_extcaps}
 # base_eval raises on the first violation and reports nothing, bits-per-byte included.
 # No `:` in the test, so an explicit empty value is honoured.
 : "${CORE_SAFE_ARMS?set CORE_SAFE_ARMS explicitly; the empty string is a valid value}"
+# No default. a0229 and infra01 bill different budgets and carry different fairshare.
+: "${ACCOUNT:?set ACCOUNT (a0229 or infra01)}"
 SEEDS=${SEEDS:-0,1,2}
 TRAINER=${TRAINER:-bpe}
 DEPTH=${DEPTH:-12}
@@ -45,10 +47,14 @@ ENCODE_WORKERS=${ENCODE_WORKERS:-90}
 OUT_DIR=${OUT_DIR:-results/extcaps_downstream}
 NANOCHAT_BASE_DIR=/capstor/scratch/cscs/cmeister747/marker_downstream/nanochat_base
 
-if ! git diff --quiet HEAD || ! git diff --cached --quiet HEAD; then
+# `git status --porcelain`, not `git diff`. Neither `git diff HEAD` nor
+# `git diff --cached` reports untracked files, so the guard passed while a new,
+# untracked file that the job runs was described by no commit.
+DIRT=$(git status --porcelain)
+if [[ -n "${DIRT}" ]]; then
   echo "refusing to submit: working tree differs from HEAD, so the jobs would run code" >&2
-  echo "no commit describes." >&2
-  git status --porcelain >&2
+  echo "no commit describes. Untracked files count." >&2
+  echo "${DIRT}" >&2
   exit 1
 fi
 
@@ -79,7 +85,16 @@ fi
 echo "-- shards: ${have} present, ${NUM_SHARDS} train + 1 val required"
 
 mkdir -p "${OUT_DIR}/slurm" "${OUT_DIR}/logs"
-IN_FLIGHT=$(squeue -u "$USER" -h -o "%j" 2>/dev/null || true)
+# No `|| true`. A scheduler hiccup would leave IN_FLIGHT empty, every seed would look
+# absent, and a re-run would submit duplicates. Two jobs with one tokenizer_id share
+# NANOCHAT_BASE/runs/<id>, hence the checkpoint directory and token_bytes.pt, and both
+# tee to one log. That is how the first sweep of this project was lost.
+if ! IN_FLIGHT=$(squeue -u "$USER" -h -o "%j" 2>&1); then
+  echo "refusing to submit: squeue failed, so in-flight jobs cannot be detected and" >&2
+  echo "this would submit duplicates sharing a checkpoint directory and a log." >&2
+  echo "${IN_FLIGHT}" >&2
+  exit 1
+fi
 JOB="extcaps_${ARM}_${TRAINER}_d${DEPTH}"
 if grep -qx "${JOB}" <<< "$IN_FLIGHT"; then
   echo "-- ${JOB}: already queued or running, not submitting"; exit 0
@@ -118,7 +133,7 @@ echo \"[pack] seed ${seed} on GPU ${gpu}, pid \${pids[-1]}\"
   gpu=$((gpu + 1))
 done
 
-jid=$(sbatch --parsable --job-name="${JOB}" --account=infra01 --partition=normal \
+jid=$(sbatch --parsable --job-name="${JOB}" --account="${ACCOUNT}" --partition=normal \
     --nodes=1 --ntasks-per-node=1 --time=12:00:00 \
     --output="${OUT_DIR}/slurm/%x_%j.out" --error="${OUT_DIR}/slurm/%x_%j.err" \
     --wrap="
@@ -141,6 +156,12 @@ export CORE_SAFE_ARMS=\"${CORE_SAFE_ARMS}\"
 export SKIP_PAPER_ARTIFACTS=1
 export VOCAB=${VOCAB} CORPUS=${CORPUS} NUM_SHARDS=${NUM_SHARDS}
 export TRAIN_WORKERS=${TRAIN_WORKERS} ENCODE_WORKERS=${ENCODE_WORKERS}
+# Pinned, not inherited. --wrap runs under the submitting shell environment, so a
+# leftover SMOKE=1 would make every seed train 20 iterations, tag itself _smoke, and
+# still print a result block that collect_results.py parses into a row.
+export SMOKE=0
+export TAG_SUFFIX=
+
 COMMIT=\$(git rev-parse HEAD)
 MAIN_COMMIT=\$(git -C /users/cmeister747/script_tok rev-parse HEAD)
 MAIN_DIRTY=\$(git -C /users/cmeister747/script_tok status --porcelain | wc -l)
