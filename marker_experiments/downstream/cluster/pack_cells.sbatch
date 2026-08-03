@@ -32,13 +32,17 @@ cd "${REPO}"
 source marker_experiments/downstream/cluster/env.sh
 
 : "${CELLS:?set CELLS, space separated lang:arm pairs}"
-TRAINERS="${TRAINERS:-bpe}"
+# Required, not defaulted. A silent fallback to bpe here would run the wrong
+# experiment: a mingram sweep would re-examine the bpe cells, find them present, and
+# exit reporting success having trained nothing.
+: "${TRAINERS:?set TRAINERS explicitly, bpe or mingram}"
 NCELLS=$(wc -w <<< "${CELLS}")
 CORES=$(nproc)
 # Leave a little headroom so the concurrent parents are not fighting for the last core.
 WORKERS="${WORKERS:-$(( (CORES - 8) / NCELLS ))}"
 
 echo "[pack] ${SLURM_JOB_ID:-nojob} node=$(hostname) cores=${CORES}"
+echo "[pack] trainer=${TRAINERS}"
 echo "[pack] ${NCELLS} cell(s) at ${WORKERS} workers each: ${CELLS}"
 echo "[pack] commit=$(git rev-parse HEAD)"
 

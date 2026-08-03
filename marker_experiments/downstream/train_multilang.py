@@ -192,6 +192,18 @@ def main(
             info["eval_slice"] = os.path.relpath(slice_path, REPO)
             info.update(eval_compression(tokenizer, slice_path))
 
+        # MinGram reaches its target by pruning down from a BPE initialisation, so unlike
+        # BPE it can stop below target: the EM loop breaks on `<= final_vocab_size` and the
+        # finalising prune only removes. A short vocabulary changes the embedding shape,
+        # hence the parameter count, hence the token horizon, and silently breaks the match
+        # with the other arms. Fail here rather than let a plausible number through.
+        if info["total_vocab"] != total_vocab:
+            raise SystemExit(
+                f"{key}: trained vocabulary is {info['total_vocab']:,}, expected "
+                f"{total_vocab:,}. The tokenizer is saved but must not be used for a "
+                f"matched comparison."
+            )
+
         part = record(key, info)
         cpt = info.get("eval_chars_per_token")
         log(f"{key}: vocab={info['total_vocab']:,} {round(time.time() - t0)}s"

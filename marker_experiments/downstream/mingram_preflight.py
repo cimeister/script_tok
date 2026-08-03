@@ -15,12 +15,15 @@ Five checks, each of which has a specific failure in mind:
    time; a segmentation change could break that.
 3. chars/token in the same range as the BPE tokenizer for the same arm. A wildly different
    number means the trainer did not converge to a comparable vocabulary.
-4. The CORE prefix property, measured rather than assumed. CORE_SAFE_ARMS is currently
-   `plain bnd_w`, measured on BPE tokenizers. MinGram segments with a dynamic program
-   instead of greedy merge replay, so an arm that is CORE-safe under BPE need not be under
-   MinGram. Getting this wrong costs a whole run: base_eval raises on the first violation
-   and then nothing is reported, bits-per-byte included.
-5. Zero-byte tokens are only ever BOS after the floor, which is what keeps the corrected
+4. The CORE prefix property. Both encoders are chunk-local: BPE and MinGram each encode
+   one pretokenizer chunk at a time, so whether encode(context) is a prefix of
+   encode(context + continuation) is a property of the pretokenizer, not of the trainer,
+   and the answer must match the BPE measurement. This check exists to confirm that rather
+   than to discover something new, and it would catch a change in the pretokenizer or in
+   the chunk-locality assumption. Getting the answer wrong costs a whole run: base_eval
+   raises on the first violation and then nothing is reported, bits-per-byte included.
+5. A marker token decodes to the empty string and still receives byte count 1. That floor
+   is what stops the bpb metric masking marker loss, and it is what makes the corrected
    bits-per-byte exact.
 
 Prints the CORE_SAFE_ARMS value the sweep should use, and exits non-zero if any check fails.
@@ -115,13 +118,26 @@ def main(
             # few percent either way is expected and a large gap is not.
             check("chars/token close to the BPE tokenizer for this arm", abs(rel) < 8.0,
                   f"mingram {cpt:.4f} vs bpe {bcpt:.4f} ({rel:+.2f}%)")
+        elif trainer == "bpe":
+            print("  [skip] chars/token comparison: this is the BPE tokenizer itself")
         else:
             print(f"  [skip] no BPE tokenizer at {bpe_path} to compare against")
 
         table = special_aware_token_bytes(adapter)
         zeros = [i for i, v in enumerate(table) if v == 0]
+        # `zeros == [bos]` alone holds by construction for any tokenizer, so it protects
+        # nothing. What matters is that the tokens which decode to nothing still carry a
+        # byte, since that is what keeps their loss in the numerator.
+        empties = [i for i in range(adapter.get_vocab_size())
+                   if i != adapter.get_bos_token_id() and adapter.decode([i]) == ""]
         check("only BOS carries zero bytes", zeros == [adapter.get_bos_token_id()],
               f"{len(zeros)} zero-byte id(s)")
+        # plain has no marker or caps codes, so having none to floor is the correct state
+        # for the baseline, not a failure. What must never happen is one existing at 0.
+        check("empty-decoding tokens are floored to 1 byte",
+              all(table[i] == 1 for i in empties),
+              f"{len(empties)} such token(s)"
+              + (f", e.g. id {empties[0]}" if empties else ", none expected for this arm"))
 
         aborts, total = _core_prefix_aborts(adapter, max_per_task)
         safe = aborts == 0
