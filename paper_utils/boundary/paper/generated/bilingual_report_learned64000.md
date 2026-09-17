@@ -13,6 +13,10 @@ Allocation counts below cover learned pieces only. Latin/Hangul are script label
 | 2,000,000,000 (50% en) | mingram | bnd_w_caps | 20,748 | 41,535 | 387 | 1,330 | 1,713 | 3.9674 | 2.2133 |
 | 2,000,000,000 (50% en) | mingram | bnd_wp_caps | 20,691 | 41,388 | 386 | 1,535 | 1,713 | 4.2993 | 2.3433 |
 | 2,000,000,000 (50% en) | mingram | bnd_wpd_caps | 20,627 | 41,234 | 381 | 1,758 | 1,713 | 4.3799 | 2.3899 |
+| 5,000,000,000 (80% en) | mingram | plain | 34,065 | 28,028 | 318 | 1,589 | 1,710 | 4.5355 | 2.3214 |
+| 5,000,000,000 (80% en) | mingram | bnd_w | 33,394 | 28,880 | 298 | 1,428 | 1,711 | 4.1054 | 2.1206 |
+| 5,000,000,000 (80% en) | mingram | bnd_wpd | 33,171 | 28,622 | 292 | 1,915 | 1,711 | 4.5511 | 2.2812 |
+| 5,000,000,000 (80% en) | mingram | bnd_wpd_caps | 32,691 | 29,062 | 305 | 1,942 | 1,713 | 4.5654 | 2.2847 |
 
 ## Paired scheme comparisons
 
@@ -33,6 +37,16 @@ Allocation counts below cover learned pieces only. Latin/Hangul are script label
 - Adding case codes to `bnd_w` changes Latin allocation by -398 learned slots and Hangul by +372; Korean compression changes +0.055%.
 - Adding case codes to `bnd_wp` changes Latin allocation by -385 learned slots and Hangul by +368; Korean compression changes +0.072%.
 - Adding case codes to `bnd_wpd` changes Latin allocation by -395 learned slots and Hangul by +371; Korean compression changes +0.091%.
+
+### fineweb_enko_5000m_en80_local_v2, mingram, learned vocabulary 64,000
+
+- `bnd_w` versus plain: English compression -9.483%, Korean -8.649%. Higher is better.
+  Allocation versus plain: {'latin': -671, 'hangul': 852, 'other_script': -20, 'nonlexical': -161}.
+- `bnd_wpd` versus plain: English compression +0.345%, Korean -1.731%. Higher is better.
+  Allocation versus plain: {'latin': -894, 'hangul': 594, 'other_script': -26, 'nonlexical': 326}.
+- `bnd_wpd_caps` versus plain: English compression +0.659%, Korean -1.579%. Higher is better.
+  Allocation versus plain: {'latin': -1374, 'hangul': 1034, 'other_script': -13, 'nonlexical': 353}.
+- Adding case codes to `bnd_wpd` changes Latin allocation by -480 learned slots and Hangul by +440; Korean compression changes +0.154%.
 
 ## MinGram versus BPE allocation
 
