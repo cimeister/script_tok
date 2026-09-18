@@ -112,3 +112,51 @@ per language.
 - capstor deletes files not accessed for 14 days, which is what destroyed this project's
   environment, data shards, checkpoints and logs between 2026-08-04 and 2026-09-17. Anything
   worth keeping past a sweep should be copied off scratch.
+
+## English retrain, for publishing the model weights
+
+Every checkpoint of the published English runs was deleted from scratch between 2026-08-04
+and 2026-09-17, and none had been copied anywhere else. The 24 runs behind the main table
+(4 schemes x 2 trainers x 3 seeds) are retrained so that the weights can be published. The
+retrained models are not the published ones: GPU training is not bit-for-bit reproducible,
+so their bits per byte will be close to the published values but not equal to them. Their
+run tags end in `_retrain`, which puts them in the `retrain` variant of the result files and
+keeps them from ever being averaged with the published rows.
+
+**Tokenizers.** The 8 English tokenizers the published models were trained with, restored
+from `fork/claude/mingram-five-arms`: the full 5 GB sample (`fineweb_en_5gb_*`), not the
+quick sample the current defaults use. `bnd_w` and `bnd_wpd` were relabelled by
+`migrate_legacy_tokenizer_config.py`, with identical token ids to the August code over 200
+English documents per file.
+
+The caps arm cannot be relabelled. The published English caps models were trained with the
+August scheme from before the fix for scripts without case, and current code implements only
+the fixed scheme. `legacy_extcaps_pretokenizer.py` holds the August code for that one class,
+with its base class renamed so that importing it leaves the current class in place, and
+`boundary_tokenizer.py` imports it. The two caps files are loaded unmodified, and they give
+token ids identical to the August code over 200 English documents per trainer.
+
+**Data.** The same 8 ClimbMix training shards and the same validation shard, downloaded with
+the command the published runs used. The sha256 of each shard is in `shard_provenance.json`.
+
+**Check before any GPU time.** The published result files record each tokenizer's byte factor,
+measured on the validation shard. Recomputing them from the restored tokenizers and the
+downloaded shard reproduces all four BPE values exactly, to 16 digits. So the tokenizers, the
+validation text and the measurement code are the ones behind the published numbers.
+
+## Keeping the checkpoints
+
+At the end of each job, `archive_checkpoints.py` copies each finished run's final model
+weights, its metadata, its log and its tokenizer to
+`/capstor/store/cscs/swissai/a0229/cmeister/script_tok_boundary/downstream_models/<sweep>/<tag>/`,
+which is not purged. Each copy is kept only when its sha256 matches the source, and
+`archive.json` records the hashes. Optimizer state is not copied: it is 1.6 times the size of
+the weights and only matters for resuming training. The Korean jobs were submitted before this
+step existed, so their weights are archived by hand after they finish.
+
+## A defect fixed on the way
+
+`precompute_byte_factors.py` loaded every tokenizer with the BPE class, so `--trainer mingram`
+failed on the first file. `run_arms.sh` treats that step as optional, so the failure was
+silent, and every MinGram run measured its own factor instead: the same number, computed once
+per run rather than once per arm.

@@ -17,6 +17,7 @@ ARMS="plain,bnd_w,bnd_wpd,bnd_wpd_caps"
 TRAINERS="bpe,mingram"
 SEEDS="0,1,2"
 ACCOUNT="a0229"
+TAG_SUFFIX=""
 PARTITION="normal"
 DRY_RUN=0
 
@@ -28,6 +29,7 @@ while [[ $# -gt 0 ]]; do
     --seeds) SEEDS="$2"; shift 2 ;;
     --account) ACCOUNT="$2"; shift 2 ;;
     --partition) PARTITION="$2"; shift 2 ;;
+    --tag-suffix) TAG_SUFFIX="$2"; shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
     *) echo "unknown argument: $1" >&2; exit 1 ;;
   esac
@@ -40,14 +42,20 @@ done
 # tokens the tokenizer makes of it. Korean yields roughly twice the tokens per character that
 # Russian does, so it needs less text for the same number of passes. Recorded per language in
 # shard_provenance.json beside the shards.
-declare -A SHARDS=( [ko]=3 [ru]=7 )
+#
+# English is the retrain of the published models: 8 ClimbMix shards, as they were.
+declare -A SHARDS=( [ko]=3 [ru]=7 [en]=8 )
 NUM_SHARDS="${SHARDS[$LANG_CODE]:-}"
 [[ -n "$NUM_SHARDS" ]] || { echo "no shard count recorded for language '$LANG_CODE'" >&2; exit 1; }
+# Tokenizer corpus per language. Korean and Russian use the quick-sample grid behind the
+# intrinsic tables. English uses the full-sample tokenizers, because those are the ones the
+# published English models were trained with.
+declare -A CORPORA=( [ko]=fineweb_ko_5gb_quick [ru]=fineweb_ru_5gb_quick [en]=fineweb_en_5gb )
+CORPUS="${CORPORA[$LANG_CODE]}"
 
 DATA_ROOT="/capstor/scratch/cscs/${USER}/marker_downstream"
 BASE="${DATA_ROOT}/nanochat_base_${LANG_CODE}"
-CORPUS="fineweb_${LANG_CODE}_5gb_quick"
-OUT="results/marker_downstream_${LANG_CODE}"
+OUT="results/marker_downstream_${LANG_CODE}${TAG_SUFFIX}"
 
 [[ -d "$BASE" ]] || { echo "no base directory ${BASE}; run build_language_shards.py first" >&2; exit 1; }
 
@@ -61,7 +69,7 @@ if (( DIRTY > 0 )); then
   git status --porcelain | sed 's/^/  /'
 fi
 echo "language=${LANG_CODE} corpus=${CORPUS} shards=${NUM_SHARDS} base=${BASE}"
-echo "arms=${ARMS} trainers=${TRAINERS} seeds=${SEEDS} account=${ACCOUNT} partition=${PARTITION}"
+echo "arms=${ARMS} trainers=${TRAINERS} seeds=${SEEDS} account=${ACCOUNT} partition=${PARTITION} tag_suffix='${TAG_SUFFIX}' out=${OUT}"
 
 # sbatch refuses a job whose --output directory does not exist.
 mkdir -p "${OUT}/slurm" "${OUT}/logs"
@@ -74,14 +82,14 @@ for trainer in ${TRAINERS//,/ }; do
       [[ -f "$tok" ]] || { echo "missing tokenizer ${tok}" >&2; exit 1; }
       runs+="${arm}:${seed} "
     done
-    name="ds_${LANG_CODE}_${trainer}_s${seed}"
+    name="ds_${LANG_CODE}${TAG_SUFFIX}_${trainer}_s${seed}"
     echo "  ${name}: ${runs}"
     [[ "$DRY_RUN" == "1" ]] && continue
     jid=$(sbatch --parsable \
       --account="${ACCOUNT}" --partition="${PARTITION}" \
       --job-name="${name}" \
       --output="${OUT}/slurm/${name}_%j.out" --error="${OUT}/slurm/${name}_%j.err" \
-      --export=ALL,REPO="${REPO}",RUNS="${runs}",TRAINER="${trainer}",CORPUS="${CORPUS}",NUM_SHARDS="${NUM_SHARDS}",OUT="${OUT}",NANOCHAT_BASE_REQUESTED="${BASE}" \
+      --export=ALL,REPO="${REPO}",RUNS="${runs}",TRAINER="${trainer}",CORPUS="${CORPUS}",NUM_SHARDS="${NUM_SHARDS}",OUT="${OUT}",NANOCHAT_BASE_REQUESTED="${BASE}",PACK_TAG_SUFFIX="${TAG_SUFFIX}" \
       paper_utils/boundary/downstream/cluster/pack_runs.sbatch)
     echo "    submitted ${jid}"
   done

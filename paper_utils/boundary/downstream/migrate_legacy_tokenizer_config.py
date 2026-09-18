@@ -46,6 +46,10 @@ FINEWEB2 = Path(
     "/capstor/store/cscs/swissai/infra01/datasets/swiss-ai/fineweb-2_0_1-quality_10-filterrobots/data/output"
 )
 LANG_DIR = {"ko": "kor_Hang", "ru": "rus_Cyrl"}
+# FineWeb-2 has no English. English documents come from the held-out FineWiki slice the grid
+# used for its own compression check, a JSON list of documents; gitignored, so its sha256 is
+# printed with every comparison that reads it.
+EN_SAMPLE = Path(__file__).resolve().parents[3] / "marker_experiments" / "eval_texts" / "en.json"
 TRAINER_CLASS = {
     "bpe": ("script_bpe.tokenizers.bpe", "BPETokenizer"),
     "mingram": ("script_bpe.tokenizers.mingram.model", "MinGramModel"),
@@ -111,6 +115,15 @@ def rewrite(path: Path, out: Path) -> tuple[dict, dict]:
 
 
 def sample_docs(lang: str, n: int) -> list[str]:
+    if lang == "en":
+        if not EN_SAMPLE.exists():
+            raise SystemExit(f"no English sample at {EN_SAMPLE}")
+        docs = json.loads(EN_SAMPLE.read_text())
+        if len(docs) < n:
+            raise SystemExit(f"{EN_SAMPLE} holds {len(docs)} documents, fewer than the {n} requested")
+        print(f"[sample] en: {EN_SAMPLE} sha256 {sha256(EN_SAMPLE)[:16]}", file=sys.stderr)
+        return docs[:n]
+
     import pyarrow.parquet as pq
 
     path = sorted((FINEWEB2 / LANG_DIR[lang]).glob("*.parquet"))[0]
@@ -165,7 +178,7 @@ def run(tokenizers: list[Path], legacy_module: Path, original_dir: Path, workdir
         original = original_dir / name
         if not original.exists():
             raise SystemExit(f"{name}: no pristine original at {original}")
-        lang = "ko" if "_ko_" in name else "ru" if "_ru_" in name else None
+        lang = next((code for code in ("ko", "ru", "en") if f"_{code}_" in name), None)
         trainer = "mingram" if "_mingram_" in name else "bpe"
         if lang is None:
             raise SystemExit(f"{name}: cannot tell the language from the file name")

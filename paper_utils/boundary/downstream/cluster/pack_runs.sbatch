@@ -82,7 +82,10 @@ VOCAB="${VOCAB:-34685}"
 # SMOKE=1 left over from a pipeline check would make every run here train 20 iterations, tag
 # itself _smoke, and still print a result block that collect_results.py parses into a row.
 export SMOKE=0
-export TAG_SUFFIX=""
+# The same protection for the tag suffix, which a sweep may set on purpose (the English
+# retrain uses _retrain, so its rows can never pool with the published ones). It is read
+# from a name nothing else sets, never from an inherited TAG_SUFFIX.
+export TAG_SUFFIX="${PACK_TAG_SUFFIX:-}"
 
 NRUNS=$(wc -w <<< "${RUNS}")
 NGPU=$(nvidia-smi --query-gpu=index --format=csv,noheader | wc -l)
@@ -109,7 +112,7 @@ VENDOR_COMMIT=$(git -C eval/py-nanochat/vendor/nanochat rev-parse HEAD)
 echo "[pack] ${SLURM_JOB_ID:-nojob} node=$(hostname) cores=${CORES} gpus=${NGPU}"
 echo "[pack] repo=${REPO} commit=${COMMIT} dirty=${DIRTY} nanochat=${VENDOR_COMMIT}"
 echo "[pack] trainer=${TRAINER} corpus=${CORPUS} depth=${DEPTH} vocab=${VOCAB} shards=${NUM_SHARDS}"
-echo "[pack] data_language=${DATA_LANG} base=${NANOCHAT_BASE} out=${OUT}"
+echo "[pack] data_language=${DATA_LANG} base=${NANOCHAT_BASE} out=${OUT} tag_suffix='${TAG_SUFFIX}'"
 echo "[pack] ${NRUNS} run(s) at ${PER_RUN_WORKERS} encode workers each: ${RUNS}"
 mkdir -p "${OUT}/slurm" "${OUT}/logs"
 cp "${PROV}" "${OUT}/slurm/shard_provenance_${DATA_LANG}.json"
@@ -165,5 +168,21 @@ done
 # either writes, so either one's file can be missing the other's row.
 uv run python paper_utils/boundary/downstream/collect_results.py \
     --logs-dir "${OUT}/logs" --out "${OUT}/results.tsv" || fail=1
+
+# Copy this job's final model weights off scratch, which deletes files after 14 days
+# without access and did exactly that to every published English checkpoint. Only this
+# job's own runs, so two jobs finishing together never copy the same one. A run that failed
+# above has no result block and is skipped with a message rather than failing this step.
+ARCHIVE_ROOT="${ARCHIVE_ROOT:-/capstor/store/cscs/swissai/a0229/cmeister/script_tok_boundary/downstream_models}"
+tag_args=()
+for run in ${RUNS}; do
+  tag_args+=(--tags "${run%%:*}_${TRAINER}_d${DEPTH}_s${run##*:}${TAG_SUFFIX}")
+done
+if ! uv run python -m paper_utils.boundary.downstream.archive_checkpoints \
+    --logs-dir "${OUT}/logs" --corpus "${CORPUS}" \
+    --dest "${ARCHIVE_ROOT}/$(basename "${OUT}")" "${tag_args[@]}"; then
+  echo "[pack] ARCHIVE FAILED: this job's checkpoints exist only on scratch, which is purged" >&2
+  fail=1
+fi
 echo "[pack] done, fail=${fail}"
 exit "${fail}"

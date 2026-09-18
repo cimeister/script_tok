@@ -109,5 +109,56 @@ def build(
     print(f"  provenance: {base_dir / 'shard_provenance.json'}")
 
 
+@app.command
+def record(lang: str, base_dir: Path, source: str):
+    """Write shard_provenance.json for shards something else put in place.
+
+    For the English retrain, whose shards are ClimbMix downloaded by nanochat's own
+    `python -m nanochat.dataset -n 8`, not links into FineWeb-2. The launcher refuses a base
+    directory without this file, so the language check covers English too. Each shard's
+    sha256 is recorded, since a download is only as reproducible as its content.
+
+    Args:
+        lang: language of the text, as it appears in the tokenizer corpus name.
+        base_dir: the NANOCHAT_BASE holding base_data_climbmix/.
+        source: free-text description of where the shards came from.
+    """
+    import hashlib
+
+    data_dir = base_dir / DATA_SUBDIR
+    files = sorted(data_dir.glob("shard_*.parquet"))
+    if len(files) < 2:
+        raise SystemExit(f"{data_dir} holds {len(files)} shard(s); need training shards and a validation shard")
+    out = base_dir / "shard_provenance.json"
+    if out.exists():
+        raise SystemExit(f"{out} exists; refusing to overwrite a provenance record")
+
+    shards = []
+    for i, f in enumerate(files):
+        digest = hashlib.sha256()
+        with open(f, "rb") as fh:
+            for block in iter(lambda: fh.read(1 << 24), b""):
+                digest.update(block)
+        shards.append(
+            {
+                "shard": f.name,
+                "role": "validation" if i == len(files) - 1 else "train",
+                "source": str(f.resolve()),
+                "bytes": f.stat().st_size,
+                "sha256": digest.hexdigest(),
+            }
+        )
+    provenance = {
+        "language": lang,
+        "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "source_dataset": source,
+        "note": "The last shard is validation, the rest training.",
+        "train_shards": len(files) - 1,
+        "shards": shards,
+    }
+    out.write_text(json.dumps(provenance, indent=1))
+    print(f"{lang}: {len(files) - 1} training shards + 1 validation shard recorded in {out}")
+
+
 if __name__ == "__main__":
     app()
