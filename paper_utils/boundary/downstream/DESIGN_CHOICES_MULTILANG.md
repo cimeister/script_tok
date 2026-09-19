@@ -55,24 +55,38 @@ writes `shard_provenance.json` beside them. The directory nanochat reads is call
 `base_data_climbmix` and holds no ClimbMix here; that name is nanochat's, and the provenance
 file is what records the truth.
 
-**How much text each language gets.** Steps per run are fixed by the model, so the tokens a
-run consumes are fixed, and the number of passes over the training text follows from how much
-text there is and how many tokens the tokenizer makes of it. The English runs passed over
-about 2e9 characters about 3.5 times. Matching that:
+**How much text each language gets.** Steps per run are fixed by the model: 2,553 steps of
+524,288 tokens, 1,338,507,264 tokens per run, which is 653,568 rows of 2,048 tokens. How many
+passes over the training text that takes depends on how many rows nanochat's loader makes
+from it. The loader packs whole documents into rows, and when no buffered document fits the
+space left in a row it crops one and discards the rest of it. So a pass yields fewer tokens
+than the text holds, and the loss is larger for languages with longer documents.
 
-| | characters per token, plain | training characters | shards |
-|---|---|---|---|
-| English (reference) | 4.46 | 2.0e9 | 8 |
-| Korean | 2.30 | 1.22e9 | 3 |
-| Russian | 4.32 | 2.05e9 | 7 |
+Rows per training file were measured by running nanochat's own loader over one file with the
+real `plain` BPE tokenizer:
 
-Characters per token are the measured values from `eval_goldfish.json`, so the pass counts
-are approximate; the exact figure per run is in its log. Matching the number of passes, rather
-than the number of characters, means each language repeats its training text about as often as
-the English runs repeated theirs. Matching characters instead would have given Korean about
-1.5 passes, which is a different setting from every other number in the paper. The 32-shard
-appendix run, a single pass, reproduced the English result, so this choice probably does not
-change the outcome. It is still a choice.
+| | rows from one file | share of the file's tokens kept | training shards | passes |
+|---|---|---|---|---|
+| English (published) | | | 8 | about 3.5, from the logs |
+| Korean | 68,960 | 0.80 | 3 | 3.11 in the logs (3.16 predicted from the row count) |
+| Russian | 18,816 | 0.53 | 10 | 3.47 predicted |
+
+The Korean prediction from the row count agrees with the pass count in the Korean logs to
+within 2%, which is the check on the method. Russian documents average about 4,450 characters
+against 1,675 for Korean, so the loader crops much more of them.
+
+Getting here took two wrong estimates, recorded because both changed a decision. The shard
+counts were first sized from characters per token alone, assuming about 1.8e9 tokens per run
+and no cropping: 3 Korean and 7 Russian shards, both meant to match English. When the first
+run printed the real budget of 1.34e9 tokens, I recomputed without cropping and reported
+Korean at about 2.4 passes and Russian at 7 shards at about 2.8, and Russian was changed to 6
+shards on that basis. Both figures were wrong in the same direction: cropping means each pass
+yields fewer tokens, so there are more passes than that calculation gave. Korean's logs show
+3.11, and the loader measurement puts 6 Russian shards at about 5.8 passes. Russian was then
+set to 10 shards. No Russian run had started at any point in this.
+
+The 32-shard English appendix run, at under one pass, reproduced the English result, so the
+remaining difference between 3.1 and 3.5 passes is unlikely to change a conclusion.
 
 The comparison that carries the claim is between schemes within one language, and all schemes
 of a language train on identical text, so the text budget does not enter it.

@@ -37,14 +37,13 @@ done
 [[ -n "$LANG_CODE" ]] || { echo "set --lang" >&2; exit 1; }
 
 # Training shards per language, chosen so each language makes about as many passes over its
-# training text as the English runs did (about 3.5). Steps per run are fixed by the model, so
-# the tokens a run consumes are fixed; passes follow from how much text there is and how many
-# tokens the tokenizer makes of it. Korean yields roughly twice the tokens per character that
-# Russian does, so it needs less text for the same number of passes. Recorded per language in
-# shard_provenance.json beside the shards.
-#
-# English is the retrain of the published models: 8 ClimbMix shards, as they were.
-declare -A SHARDS=( [ko]=3 [ru]=7 [en]=8 )
+# training text as the English runs (about 3.5). A run consumes a fixed 653,568 rows of 2,048
+# tokens, and nanochat's loader crops long documents when packing rows, so passes depend on
+# how many rows a file yields, measured with the real loader: Korean 68,960 rows per file
+# (3 shards, 3.11 passes observed), Russian 18,816 (10 shards, about 3.5 passes). English is
+# the retrain of the published models: 8 ClimbMix shards, as they were.
+# See DESIGN_CHOICES_MULTILANG.md for how these were arrived at.
+declare -A SHARDS=( [ko]=3 [ru]=10 [en]=8 )
 NUM_SHARDS="${SHARDS[$LANG_CODE]:-}"
 [[ -n "$NUM_SHARDS" ]] || { echo "no shard count recorded for language '$LANG_CODE'" >&2; exit 1; }
 # Tokenizer corpus per language. Korean and Russian use the quick-sample grid behind the
@@ -55,7 +54,11 @@ CORPUS="${CORPORA[$LANG_CODE]}"
 
 DATA_ROOT="/capstor/scratch/cscs/${USER}/marker_downstream"
 BASE="${DATA_ROOT}/nanochat_base_${LANG_CODE}"
-OUT="results/marker_downstream_${LANG_CODE}${TAG_SUFFIX}"
+# One output directory per trainer. collect_results.py refuses a log directory holding both
+# trainers, because `arm` does not carry the trainer and the means would pool. The Korean and
+# English sweeps of 2026-09-19 shared one directory, so every job's final collection failed
+# and all 12 jobs were marked FAILED although all 48 runs had finished.
+OUT_BASE="results/marker_downstream_${LANG_CODE}${TAG_SUFFIX}"
 
 [[ -d "$BASE" ]] || { echo "no base directory ${BASE}; run build_language_shards.py first" >&2; exit 1; }
 
@@ -69,12 +72,12 @@ if (( DIRTY > 0 )); then
   git status --porcelain | sed 's/^/  /'
 fi
 echo "language=${LANG_CODE} corpus=${CORPUS} shards=${NUM_SHARDS} base=${BASE}"
-echo "arms=${ARMS} trainers=${TRAINERS} seeds=${SEEDS} account=${ACCOUNT} partition=${PARTITION} tag_suffix='${TAG_SUFFIX}' out=${OUT}"
-
-# sbatch refuses a job whose --output directory does not exist.
-mkdir -p "${OUT}/slurm" "${OUT}/logs"
+echo "arms=${ARMS} trainers=${TRAINERS} seeds=${SEEDS} account=${ACCOUNT} partition=${PARTITION} tag_suffix='${TAG_SUFFIX}' out=${OUT_BASE}_<trainer>"
 
 for trainer in ${TRAINERS//,/ }; do
+  OUT="${OUT_BASE}_${trainer}"
+  # sbatch refuses a job whose --output directory does not exist.
+  [[ "$DRY_RUN" == "1" ]] || mkdir -p "${OUT}/slurm" "${OUT}/logs"
   for seed in ${SEEDS//,/ }; do
     runs=""
     for arm in ${ARMS//,/ }; do
