@@ -110,6 +110,33 @@ def build(
 
 
 @app.command
+def rehash(base_dir: Path):
+    """Add a sha256 for every shard to an existing provenance file.
+
+    `build` links shards and records names, sizes and character counts. A reader who cannot
+    see this filesystem needs the hashes as well, to tell whether a file they hold is the
+    same one. This fills them in without touching the selection or anything else recorded.
+    """
+    import hashlib
+
+    out = base_dir / "shard_provenance.json"
+    provenance = json.loads(out.read_text())
+    for shard in provenance["shards"]:
+        path = (base_dir / DATA_SUBDIR / shard["shard"]).resolve()
+        if path.stat().st_size != shard["bytes"]:
+            raise SystemExit(f"{path} is {path.stat().st_size} bytes, provenance says {shard['bytes']}")
+        digest = hashlib.sha256()
+        with open(path, "rb") as fh:
+            for block in iter(lambda: fh.read(1 << 24), b""):
+                digest.update(block)
+        shard["sha256"] = digest.hexdigest()
+        print(f"  {shard['shard']} {shard['sha256'][:16]} {path}")
+    provenance["hashed"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    out.write_text(json.dumps(provenance, indent=1))
+    print(f"{len(provenance['shards'])} shard(s) hashed in {out}")
+
+
+@app.command
 def record(lang: str, base_dir: Path, source: str):
     """Write shard_provenance.json for shards something else put in place.
 
