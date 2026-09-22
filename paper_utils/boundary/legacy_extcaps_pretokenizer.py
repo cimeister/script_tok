@@ -469,6 +469,3 @@ class ExtCapsBoundaryScriptPretokenizer(
                 i += 1
         flush()
         return decoded
-
-
-
