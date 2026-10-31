@@ -15,6 +15,11 @@ import seaborn as sns
 
 from paper_utils.hybrid.train_hybrid import OVERSHOOT_FACTORS, get_model_path as get_hybrid_model_path
 from paper_utils.hybrid.utils import (
+    EOW_METHOD_KEY,
+    GEO_LAMBDAS,
+    geo_label,
+    geo_method_key,
+    length_prior_methods,
     TRAIN_CORPUS_SUFFIX,
     FSP_OVERRIDES,
     FSP_PARAMS,
@@ -86,6 +91,16 @@ REFERENCE_STYLE = {
     "FSP": {"color": "#9467bd", "marker": "^", "label": "FSP", "filled": True},
     "PathPiece-B": {"color": "#e377c2", "marker": "s", "label": "PathPiece", "filled": True},
     "ConvexTok": {"color": "#17becf", "marker": "*", "label": "ConvexTok", "filled": True},
+    EOW_METHOD_KEY: {"color": "#8c564b", "marker": "X", "label": "Unigram-EOW", "filled": True},
+    **{
+        geo_method_key(lam): {
+            "color": ["#bcbd22", "#7f7f7f", "#aec7e8", "#ffbb78"][i % 4],
+            "marker": "v",
+            "label": geo_label(lam),
+            "filled": True,
+        }
+        for i, lam in enumerate(GEO_LAMBDAS)
+    },
 }
 
 TRACE_ORDER = ["bpe_init", "bpe_init_fsp", "mingram"]
@@ -338,6 +353,37 @@ def collect_convextok_refs(
     return {"ConvexTok": {"rel_tok": float(rel_tok), "morphalign": float(score)}}
 
 
+def collect_length_prior_refs(
+    train_corpus: str,
+    eval_corpus_name: str,
+    gold_file: Path,
+    baseline: dict,
+    cache: dict,
+    lang: str,
+) -> dict[str, dict]:
+    """Unigram-EOW / Unigram-Geo models as single reference points; absent models are skipped."""
+    refs: dict[str, dict] = {}
+    eval_corpus = None
+    for method, params in length_prior_methods():
+        model_path = get_unigram_model_path(train_corpus, params)
+        if not model_path.exists():
+            continue
+        cache_key = f"{lang}/{method}/{model_path.name}"
+        tokens_key = f"tokens/{eval_corpus_name}/{cache_key}"
+        if cache_key not in cache or tokens_key not in cache:
+            if eval_corpus is None:
+                eval_corpus = load_corpus_by_name(eval_corpus_name, baseline["model"].pretokenizer)
+            model = UnigramModel.load(str(model_path))
+            tokens = cached_eval_total_tokens(model, eval_corpus, cache, cache_key, eval_corpus_name)
+            score = morphalign_score(model, gold_file, cache, cache_key)
+        else:
+            tokens = int(cache[tokens_key])
+            score = float(cache[cache_key])
+        rel_tok = (tokens - baseline["tokens"]) / baseline["tokens"] * 100
+        refs[method] = {"rel_tok": float(rel_tok), "morphalign": float(score)}
+    return refs
+
+
 def collect_mingram_points(
     train_corpus: str,
     eval_corpus_name: str,
@@ -435,6 +481,14 @@ def get_reference_points(
     )
     refs.update(pp_refs)
     refs.update(collect_convextok_refs(
+        train_corpus=train_corpus,
+        eval_corpus_name=eval_corpus_name,
+        gold_file=gold_file,
+        baseline=baseline,
+        cache=cache,
+        lang=lang,
+    ))
+    refs.update(collect_length_prior_refs(
         train_corpus=train_corpus,
         eval_corpus_name=eval_corpus_name,
         gold_file=gold_file,
@@ -603,7 +657,7 @@ def plot(rows: list[dict], out_png: Path):
                 label=style["label"],
             )
         )
-    for name in ["BPE", "Default", "FSP", "PathPiece-B"]:
+    for name in ["BPE", "Default", "FSP", "PathPiece-B", EOW_METHOD_KEY, *[geo_method_key(lam) for lam in GEO_LAMBDAS]]:
         if name not in REFERENCE_STYLE:
             continue
         style = REFERENCE_STYLE[name]

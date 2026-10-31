@@ -18,6 +18,7 @@ from paper_utils.unigram.train_hyperparameters import (
     PRETOKENIZER_NAME,
     ADDITIONAL_VOCAB_SIZE,
     USE_CACHE,
+    length_prior_infix,
 )
 
 # ========== HYBRID-SPECIFIC SETTINGS ==========
@@ -62,7 +63,7 @@ def get_model_path(corpus_name: str, params: dict) -> Path:
         prefix = f"bpe_init_{params['bpe_init_factor']}"
     else:
         prefix = params.get('init_vocab_algo', 'corpus_long')
-    return cache_dir / f"{prefix}_n{vocab_size}_{config_hash}.model.json.gz"
+    return cache_dir / f"{prefix}{length_prior_infix(params)}_n{vocab_size}_{config_hash}.model.json.gz"
 
 
 # ========== BPE-INIT UTILITIES ==========

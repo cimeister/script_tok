@@ -29,6 +29,30 @@ DEFAULT_OVERSHOOT_FACTOR = 1.1
 TRAIN_CORPUS_SUFFIX = os.environ.get("MINGRAM_TRAIN_CORPUS_SUFFIX", "")
 FSP_OVERRIDES = {"flat_score_prune": True, "pre_final_vocab_factor": 1.0}
 FSP_PARAMS = {**DEFAULTS, **FSP_OVERRIDES}
+
+# Length-prior Unigram variants (trained with train_model.py --method default --length-prior ...).
+# Per-token penalties lambda for the "geometric" variant; placeholder value, to be chosen. Several values
+# can be listed to plot them side by side (method keys then get the lambda appended, see geo_method_key).
+GEO_LAMBDAS: list[float] = [1.0]
+EOW_METHOD_KEY = "unigram_eow"
+EOW_PARAMS = {**DEFAULTS, "length_prior": "eow"}
+
+
+def geo_params(prior_lambda: float) -> dict:
+    return {**DEFAULTS, "length_prior": "geometric", "token_bias": prior_lambda}
+
+
+def geo_method_key(prior_lambda: float) -> str:
+    return "unigram_geo" if len(GEO_LAMBDAS) == 1 else f"unigram_geo_{prior_lambda:g}"
+
+
+def geo_label(prior_lambda: float) -> str:
+    return f"Unigram-Geo ($\\lambda$={prior_lambda:g})"
+
+
+def length_prior_methods() -> list[tuple[str, dict]]:
+    """(method key, unigram trainer params) for every length-prior variant, EOW first."""
+    return [(EOW_METHOD_KEY, EOW_PARAMS)] + [(geo_method_key(lam), geo_params(lam)) for lam in GEO_LAMBDAS]
 MORPHALIGN_SCORE_SCALE = 100.0
 
 

@@ -13,6 +13,10 @@ from script_bpe.tokenizers import BaseToken
 from script_bpe.tokenizers.base import BaseTokenizer
 
 
+LENGTH_PRIOR_EOW = "eow"
+LENGTH_PRIOR_GEOMETRIC = "geometric"
+
+
 def logaddexp(a: float, b: float) -> float:
     """Stable log(exp(a) + exp(b)) for two finite terms."""
     if a < b:
@@ -163,7 +167,13 @@ class UnigramModel(BaseTokenizer):
     VERSION = "seunigram-v1"
     REPORT_TITLE = "Unigram Tokenizer Report"
 
-    def __init__(self, pretokenizer: Pretokenizer, tokens: list[UnigramToken], metadata: dict | None = None):
+    def __init__(
+        self,
+        pretokenizer: Pretokenizer,
+        tokens: list[UnigramToken],
+        metadata: dict | None = None,
+        length_prior: dict | None = None,
+    ):
         """
         Initialize the Unigram model.
 
@@ -171,6 +181,10 @@ class UnigramModel(BaseTokenizer):
                 pretokenizer: The pretokenizer to use for encoding/decoding
                 tokens: List of UnigramToken objects (optional)
                 metadata: Additional metadata to store with the model
+                length_prior: Optional description of the token-count prior used in training.
+                    ``{"type": "eow", "eow_log_prob": x}`` is informational only (the prior is already
+                    folded into the token log_probs). ``{"type": "geometric", "lambda": x}`` makes
+                    inference subtract ``x`` from every lattice arc. None means no prior (legacy behaviour).
         """
         self.pretokenizer = pretokenizer
         # Canonical store: dict[int, UnigramToken]
@@ -178,8 +192,27 @@ class UnigramModel(BaseTokenizer):
         self.trie = Trie(tokens)
         self.metadata = metadata or {}
         self.tokens_by_id = self.tokens
+        self.length_prior = length_prior
+        self.token_bias = self._token_bias_from_length_prior(length_prior)
 
-    def make_lattice(self, atomic_token_seq: TokenSeq, token_bias: float = 0.0) -> Lattice:
+    @staticmethod
+    def _token_bias_from_length_prior(length_prior: dict | None) -> float:
+        """Per-arc penalty implied by ``length_prior`` (0.0 when there is none)."""
+        if length_prior is None:
+            return 0.0
+        prior_type = length_prior.get("type")
+        if prior_type == LENGTH_PRIOR_EOW:
+            return 0.0
+        if prior_type == LENGTH_PRIOR_GEOMETRIC:
+            if "lambda" not in length_prior:
+                raise ValueError(f"length_prior of type {prior_type!r} has no 'lambda' field: {length_prior!r}")
+            return float(length_prior["lambda"])
+        raise ValueError(f"Unknown length_prior type {prior_type!r} in {length_prior!r}")
+
+    def make_lattice(self, atomic_token_seq: TokenSeq, token_bias: float | None = None) -> Lattice:
+        """Build the lattice. ``token_bias=None`` uses the penalty of the model's own length prior."""
+        if token_bias is None:
+            token_bias = self.token_bias
         tokens_from_pos = [self.trie.find_prefixes(atomic_token_seq[i:]) for i in range(len(atomic_token_seq))]
         return Lattice(atomic_token_seq, tokens_from_pos, token_bias)
 
@@ -220,7 +253,12 @@ class UnigramModel(BaseTokenizer):
         tokens = [UnigramToken(**t) for t in data["tokens"]]
         if reindex:
             tokens = reindex_tokens(tokens)
-        return cls(pretokenizer=pretokenizer, tokens=tokens, metadata=data.get("metadata"))
+        return cls(
+            pretokenizer=pretokenizer,
+            tokens=tokens,
+            metadata=data.get("metadata"),
+            length_prior=data.get("length_prior"),
+        )
 
     def save(self, file_path: str) -> str:
         """Save the model to a file.
@@ -235,14 +273,17 @@ class UnigramModel(BaseTokenizer):
         if dirname:
             os.makedirs(dirname, exist_ok=True)
         open_func = gzip.open if file_path.endswith(".gz") else open
+        data = {
+            "info": {"version": self.VERSION},
+            "pretokenizer": export_pretokenizer(self.pretokenizer),
+            "tokens": [t.to_dict() for t in self.tokens.values()],
+            "metadata": self.metadata,
+        }
+        if self.length_prior is not None:  # omitted when absent so legacy models serialize unchanged
+            data["length_prior"] = self.length_prior
         with open_func(file_path, "wt") as f:
             json.dump(
-                {
-                    "info": {"version": self.VERSION},
-                    "pretokenizer": export_pretokenizer(self.pretokenizer),
-                    "tokens": [t.to_dict() for t in self.tokens.values()],
-                    "metadata": self.metadata,
-                },
+                data,
                 f,
                 indent=2,
             )

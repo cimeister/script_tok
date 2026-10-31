@@ -113,6 +113,22 @@ def get_experiment_configs(experiment_name: str) -> list[dict]:
     raise ValueError(f"Unknown experiment: {experiment_name}")
 
 
+def length_prior_infix(params: dict) -> str:
+    """Filename infix identifying a length-prior variant ("" for the historical no-prior models).
+
+    The prior is part of ``params`` only when active (keys ``length_prior`` and, for "geometric", ``token_bias``),
+    so the hash and filename of models without it are unchanged.
+    """
+    prior = params.get("length_prior", "none")
+    if prior == "none":
+        return ""
+    if prior == "eow":
+        return "_eow"
+    if prior == "geometric":
+        return f"_geo{params['token_bias']:g}"
+    raise ValueError(f"Unknown length_prior {prior!r} in params {params!r}")
+
+
 def get_model_path(corpus_name: str, params: dict) -> Path:
     """Get the file path for a model with given corpus and parameters."""
     vocab_size = params.get("additional_vocab_size", ADDITIONAL_VOCAB_SIZE)
@@ -126,7 +142,7 @@ def get_model_path(corpus_name: str, params: dict) -> Path:
         }
     )
     prefix = params.get("init_vocab_algo", "corpus_long")
-    return cache_dir / f"{prefix}_n{vocab_size}_{config_hash}.model.json.gz"
+    return cache_dir / f"{prefix}{length_prior_infix(params)}_n{vocab_size}_{config_hash}.model.json.gz"
 
 
 def load_model_if_cached(corpus_name: str, params: dict) -> tuple[UnigramModel | None, Path]:

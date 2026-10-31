@@ -20,7 +20,19 @@ from paper_utils.hybrid.train_mingram import (
     get_model_path as get_mingram_model_path,
 )
 from paper_utils.hybrid.train_pathpiece import get_model_path as get_pathpiece_model_path
-from paper_utils.hybrid.utils import FSP_OVERRIDES, FSP_PARAMS, load_cache, paper_figure_path, save_cache, TRAIN_CORPUS_SUFFIX
+from paper_utils.hybrid.utils import (
+    EOW_METHOD_KEY,
+    GEO_LAMBDAS,
+    geo_label,
+    geo_method_key,
+    length_prior_methods,
+    FSP_OVERRIDES,
+    FSP_PARAMS,
+    load_cache,
+    paper_figure_path,
+    save_cache,
+    TRAIN_CORPUS_SUFFIX,
+)
 from paper_utils.unigram.train_hyperparameters import DEFAULTS, get_model_path as get_unigram_model_path
 from script_bpe.corpus.registry import load_corpus_by_name
 from script_bpe.tokenizers.bpe import BPETokenizer
@@ -145,6 +157,7 @@ PAIRINGS = [
 # FineWeb evaluation checks.
 SHOWN_PAIRINGS = ["fineweb->fishfood", "fineweb_h6->fishfood"]
 
+GEO_COLORS = ["#bcbd22", "#7f7f7f", "#aec7e8", "#ffbb78"]
 METHOD_ORDER = [
     "bpe",
     "fsp",
@@ -154,6 +167,8 @@ METHOD_ORDER = [
     "mingram_pp",
     "pathpiece_bpe",
     "convextok",
+    EOW_METHOD_KEY,
+    *[geo_method_key(lam) for lam in GEO_LAMBDAS],
 ]
 # Methods plotted in the grid (all of METHOD_ORDER; PathPiece gaps fill once it's
 # trained on the FineWeb/h6 corpora too).
@@ -166,6 +181,8 @@ GRID_PLOT_METHODS = [
     "mingram_pp",
     "pathpiece_bpe",
     "convextok",
+    EOW_METHOD_KEY,
+    *[geo_method_key(lam) for lam in GEO_LAMBDAS],
 ]
 METHOD_LABELS = {
     "bpe": "BPE",
@@ -176,6 +193,8 @@ METHOD_LABELS = {
     "mingram_pp": f"MinGram-PP (f={MINGRAM_PP_F:g})",
     "pathpiece_bpe": "PathPiece (BPE init)",
     "convextok": "ConvexTok",
+    EOW_METHOD_KEY: "Unigram-EOW",
+    **{geo_method_key(lam): geo_label(lam) for lam in GEO_LAMBDAS},
 }
 METHOD_COLORS = {
     "bpe": "#ff7f0e",
@@ -186,6 +205,8 @@ METHOD_COLORS = {
     "mingram_pp": "#009E73",
     "pathpiece_bpe": "#e377c2",
     "convextok": "#17becf",
+    EOW_METHOD_KEY: "#8c564b",
+    **{geo_method_key(lam): GEO_COLORS[i % len(GEO_COLORS)] for i, lam in enumerate(GEO_LAMBDAS)},
 }
 
 
@@ -390,6 +411,13 @@ def _build_tasks(pairing_keys: set[str] | None = None) -> tuple[list[dict], dict
                 task = _task_for_model(train_corpus, eval_corpus, "convextok", "convextok", convextok_path)
                 tasks.append(task)
                 entry["methods"]["convextok"] = {"cache_key": task["cache_key"]}
+
+            for lp_method, lp_params in length_prior_methods():
+                lp_path = get_unigram_model_path(train_corpus, lp_params)
+                if lp_path.exists():
+                    task = _task_for_model(train_corpus, eval_corpus, lp_method, "unigram", lp_path)
+                    tasks.append(task)
+                    entry["methods"][lp_method] = {"cache_key": task["cache_key"]}
 
             pp_path = get_pathpiece_model_path(train_corpus, init="bpe")
             task = _task_for_model(train_corpus, eval_corpus, "pathpiece_bpe", "pathpiece", pp_path)

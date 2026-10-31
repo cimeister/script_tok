@@ -51,6 +51,23 @@ _UNIGRAM_PARAMS: dict[str, dict] = {
 }
 
 
+def _unigram_params(method: str, length_prior: str, prior_lambda: float) -> dict:
+    """Unigram trainer params for ``method``; length-prior keys are added only when active (keeps historical hashes)."""
+    params = dict(_UNIGRAM_PARAMS[method])
+    if length_prior == "none":
+        if prior_lambda != 0:
+            raise ValueError(f"--prior-lambda {prior_lambda} requires --length-prior geometric")
+        return params
+    params["length_prior"] = length_prior
+    if length_prior == "geometric":
+        if prior_lambda <= 0:
+            raise ValueError("--length-prior geometric requires --prior-lambda > 0")
+        params["token_bias"] = prior_lambda
+    elif prior_lambda != 0:
+        raise ValueError(f"--prior-lambda {prior_lambda} is only valid with --length-prior geometric")
+    return params
+
+
 def get_model_path(
     method: str,
     corpus: str,
@@ -60,7 +77,11 @@ def get_model_path(
     additional_vocab_size: int,
     prune_criterion: str = "usage_count",
     skip_substring: bool = False,
+    length_prior: str = "none",
+    prior_lambda: float = 0.0,
 ):
+    if length_prior != "none" and method not in _UNIGRAM_PARAMS:
+        raise ValueError(f"--length-prior {length_prior} is not supported for method {method!r}")
     if method == "bpe":
         return get_bpe_model_path(corpus, additional_vocab_size)
     if method == "mingram":
@@ -68,11 +89,11 @@ def get_model_path(
             corpus, overshoot_factor, num_em, pruning, additional_vocab_size, prune_criterion, skip_substring
         )
     if method in ("bpe_init", "bpe_init_fsp"):
-        params = {**_UNIGRAM_PARAMS[method], "overshoot_factor": overshoot_factor}
+        params = {**_unigram_params(method, length_prior, prior_lambda), "overshoot_factor": overshoot_factor}
         if additional_vocab_size != ADDITIONAL_VOCAB_SIZE:
             params["additional_vocab_size"] = additional_vocab_size
         return get_hybrid_model_path(corpus, params)
-    params = dict(_UNIGRAM_PARAMS[method])
+    params = _unigram_params(method, length_prior, prior_lambda)
     if additional_vocab_size != ADDITIONAL_VOCAB_SIZE:
         params["additional_vocab_size"] = additional_vocab_size
     return get_unigram_model_path(corpus, params)
@@ -88,10 +109,21 @@ def train(
     num_workers: int,
     prune_criterion: str = "usage_count",
     skip_substring: bool = False,
+    length_prior: str = "none",
+    prior_lambda: float = 0.0,
 ) -> None:
     logger = create_logger("train_model", verbose=True)
     model_path = get_model_path(
-        method, corpus, overshoot_factor, num_em, pruning, additional_vocab_size, prune_criterion, skip_substring
+        method,
+        corpus,
+        overshoot_factor,
+        num_em,
+        pruning,
+        additional_vocab_size,
+        prune_criterion,
+        skip_substring,
+        length_prior,
+        prior_lambda,
     )
 
     pretokenizer = get_pretokenizer(PRETOKENIZER_NAME)
@@ -140,7 +172,7 @@ def train(
         model.metadata["time"] = time.perf_counter() - t0
         model.metadata["performance"] = model.corpus_performance(corpus_data)
     else:
-        params = dict(_UNIGRAM_PARAMS[method])
+        params = _unigram_params(method, length_prior, prior_lambda)
         cfg = UnigramTrainerConfig(additional_vocab_size=additional_vocab_size, num_workers=num_workers, **params)
         if overshoot_factor is not None:
             bpe_vocab_size = int(additional_vocab_size * overshoot_factor)
@@ -178,6 +210,11 @@ def main():
                         help="mingram only: 'mi' = careful MinGram-PP prune (vs default usage-count)")
     parser.add_argument("--skip-substring", action="store_true",
                         help="mingram mi only: skip dropping a token that is a substring of an already-dropped one in the batch (Craig Schmidt, pers. comm.)")
+    parser.add_argument("--length-prior", choices=["none", "eow", "geometric"], default="none",
+                        help="unigram methods only: token-count prior (eow = learned geometric via end-of-word outcome, "
+                             "geometric = fixed per-token penalty --prior-lambda)")
+    parser.add_argument("--prior-lambda", type=float, default=0.0,
+                        help="per-token penalty for --length-prior geometric (must be > 0 there, 0 otherwise)")
     args = parser.parse_args()
 
     if args.method in ("bpe_init", "bpe_init_fsp", "mingram") and args.overshoot_factor is None:
@@ -193,6 +230,8 @@ def main():
         args.num_workers,
         args.prune_criterion,
         args.skip_substring,
+        args.length_prior,
+        args.prior_lambda,
     )
 
 

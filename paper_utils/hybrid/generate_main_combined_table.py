@@ -23,8 +23,20 @@ from pathlib import Path
 from paper_utils.hybrid.train_hybrid import get_model_path as get_hybrid_model_path
 from paper_utils.hybrid.train_mingram import get_model_path as get_mingram_model_path
 from paper_utils.hybrid.train_pathpiece import get_model_path as get_pathpiece_model_path
-from paper_utils.hybrid.utils import FSP_OVERRIDES, geomean, morphalign_paper_score, paper_table_path, TRAIN_CORPUS_SUFFIX
-from paper_utils.unigram.train_hyperparameters import DEFAULTS
+from paper_utils.hybrid.utils import (
+    EOW_METHOD_KEY,
+    GEO_LAMBDAS,
+    FSP_OVERRIDES,
+    geo_label,
+    geo_method_key,
+    geo_params,
+    EOW_PARAMS,
+    geomean,
+    morphalign_paper_score,
+    paper_table_path,
+    TRAIN_CORPUS_SUFFIX,
+)
+from paper_utils.unigram.train_hyperparameters import DEFAULTS, get_model_path as get_unigram_model_path
 
 REPO_ROOT = Path(__file__).parents[2]
 RESULTS_DIR = REPO_ROOT / "results/hybrid"
@@ -50,6 +62,8 @@ METHOD_ORDER = [
     "mingram_pp",
     "pathpiece_bpe",
     "convextok",
+    EOW_METHOD_KEY,
+    *[geo_method_key(lam) for lam in GEO_LAMBDAS],
 ]
 COMPRESSION_METHOD_ORDER = [method for method in METHOD_ORDER if method != "unigram"]
 METHOD_LABEL = {
@@ -62,6 +76,8 @@ METHOD_LABEL = {
     "mingram_pp": "\\mingrampp{}",
     "pathpiece_bpe": "PathPiece\\hspace{0pt}-BPE",
     "convextok": "ConvexTok",
+    EOW_METHOD_KEY: "Unigram\\hspace{0pt}-EOW",
+    **{geo_method_key(lam): geo_label(lam) for lam in GEO_LAMBDAS},
 }
 
 GRID_KEY = {
@@ -74,7 +90,12 @@ GRID_KEY = {
     "mingram_pp": "mingram_pp",
     "pathpiece_bpe": "pathpiece_bpe",
     "convextok": "convextok",
+    EOW_METHOD_KEY: EOW_METHOD_KEY,
+    **{geo_method_key(lam): geo_method_key(lam) for lam in GEO_LAMBDAS},
 }
+
+# method key -> trainer params of the length-prior Unigram variants
+LENGTH_PRIOR_PARAMS = {EOW_METHOD_KEY: EOW_PARAMS, **{geo_method_key(lam): geo_params(lam) for lam in GEO_LAMBDAS}}
 
 COMPRESSION_LANGS = ["eng", "deu", "fin", "rus", "arb", "kor"]
 MORPHALIGN_LANGS = ["eng", "deu", "fin"]
@@ -185,6 +206,16 @@ def _morphalign_convextok(cache: dict, lang: str) -> float | None:
     return _compute_convextok_morphalign(cache, lang, model_path, cache_key)
 
 
+def _morphalign_length_prior(cache: dict, lang: str, method: str) -> float | None:
+    """MorphAlign of a length-prior Unigram model; None when the model file is absent."""
+    train_corpus = TRAIN_CORPUS_BY_LANG[lang]
+    model_path = get_unigram_model_path(train_corpus, LENGTH_PRIOR_PARAMS[method])
+    cache_key = f"{lang}/{method}/{model_path.name}"
+    if cache_key in cache:
+        return float(cache[cache_key])
+    return _compute_unigram_family_morphalign(cache, lang, model_path, cache_key)
+
+
 def _morphalign_fsp_bpe_init(cache: dict, lang: str, f: float) -> float | None:
     train_corpus = TRAIN_CORPUS_BY_LANG[lang]
     model_path = get_hybrid_model_path(
@@ -250,6 +281,8 @@ def _morphalign_row(cache: dict, method: str) -> dict[str, float | None]:
             out[lang] = _morphalign_pathpiece(cache, lang, "bpe")
         elif method == "convextok":
             out[lang] = _morphalign_convextok(cache, lang)
+        elif method in LENGTH_PRIOR_PARAMS:
+            out[lang] = _morphalign_length_prior(cache, lang, method)
         else:
             out[lang] = None
     return out

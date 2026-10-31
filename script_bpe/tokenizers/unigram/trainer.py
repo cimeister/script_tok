@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Sequence
+from typing import Literal, Sequence
 
 import heapq
 import math
@@ -10,13 +10,18 @@ from scipy.special import digamma
 from script_bpe.corpus import PretokenizedCorpus
 from script_bpe.pretokenize import Pretokenizer
 from script_bpe.tokenizers.base import BaseTrainer, TrainerConfig
-from script_bpe.tokenizers.unigram.model import UnigramModel, UnigramToken
+from script_bpe.tokenizers.unigram.model import (
+    LENGTH_PRIOR_EOW,
+    LENGTH_PRIOR_GEOMETRIC,
+    UnigramModel,
+    UnigramToken,
+)
 from script_bpe.tokenizers.unigram.init_algorithms import (
     compute_substring_frequencies_simple,
     compute_substring_frequencies_corpus,
 )
 from script_bpe.utils import token_array
-from pydantic import ConfigDict
+from pydantic import ConfigDict, model_validator
 
 
 class UnigramTrainerConfig(TrainerConfig):
@@ -42,8 +47,25 @@ class UnigramTrainerConfig(TrainerConfig):
     forced_initial_vocab: Sequence[UnigramToken] | None = None
     # Token bias: subtracted from each token's log_prob during training to encourage compression.
     # Higher bias = fewer tokens used = better compression but worse likelihood.
+    # With length_prior="geometric", token_bias is the per-token penalty lambda (also applied by the model at inference).
     token_bias: float = 0.0
+    # Token-count prior P(M=m) that the standard Unigram LM drops:
+    #   "none": legacy behaviour; "eow": geometric prior with learned parameter via an end-of-word outcome of the
+    #   categorical; "geometric": fixed per-token penalty lambda = token_bias.
+    length_prior: Literal["none", "eow", "geometric"] = "none"
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
+
+    @model_validator(mode="after")
+    def _check_length_prior(self):
+        if self.token_bias < 0:
+            raise ValueError(f"token_bias must be >= 0, got {self.token_bias}")
+        if self.token_bias > 0 and self.length_prior != LENGTH_PRIOR_GEOMETRIC:
+            raise ValueError(
+                f"token_bias={self.token_bias} > 0 requires length_prior='geometric', got {self.length_prior!r}"
+            )
+        if self.length_prior == LENGTH_PRIOR_EOW and self.token_bias != 0:
+            raise ValueError(f"length_prior='eow' requires token_bias == 0, got {self.token_bias}")
+        return self
 
 
 class UnigramTrainer(BaseTrainer):
@@ -51,6 +73,13 @@ class UnigramTrainer(BaseTrainer):
 
     def __init__(self, pretokenizer: Pretokenizer, corpus: PretokenizedCorpus, config: UnigramTrainerConfig):
         super().__init__(pretokenizer, corpus, config)
+        # EOW pseudo-count: one end-of-word outcome per pretoken occurrence (constant). Kept as a scalar, not a token.
+        self.eow_count: float = (
+            float(sum(freq for _, freq in self.corpus)) if config.length_prior == LENGTH_PRIOR_EOW else 0.0
+        )
+        if config.length_prior == LENGTH_PRIOR_EOW and self.eow_count <= 0:
+            raise ValueError("length_prior='eow' needs a corpus with at least one pretoken occurrence")
+        self.eow_log_prob: float | None = None  # set by run_m_step
 
     def train(self) -> UnigramModel:
         cfg = self.config
@@ -125,6 +154,11 @@ class UnigramTrainer(BaseTrainer):
         self.logger.debug(f"   ├─ Total tokens: {stats['total_tokens']:,d}")
         self.logger.debug(f"   └─ Avg tokens/pretoken: {stats['tokens/pretoken']:.4f}")
 
+        if cfg.length_prior == LENGTH_PRIOR_EOW:
+            model.length_prior = {"type": LENGTH_PRIOR_EOW, "eow_log_prob": self.eow_log_prob}
+        elif cfg.length_prior == LENGTH_PRIOR_GEOMETRIC:
+            model.length_prior = {"type": LENGTH_PRIOR_GEOMETRIC, "lambda": cfg.token_bias}
+            model.token_bias = cfg.token_bias
         model.metadata = {
             **stats,
             "config": self.config.model_dump(exclude={"forced_initial_vocab"}),
@@ -146,9 +180,13 @@ class UnigramTrainer(BaseTrainer):
             )
 
     @staticmethod
-    def init_vocab_normalize_scores(all_tokens: list[tuple[float, tuple[int, ...]]], n) -> list[UnigramToken]:
+    def init_vocab_normalize_scores(
+        all_tokens: list[tuple[float, tuple[int, ...]]], n, eow_count: float = 0.0
+    ) -> list[UnigramToken]:
         selected_tokens = heapq.nlargest(n, all_tokens, key=lambda item: (len(item[1]) == 1, item[0]))
-        log_sum_scores = math.log(sum(score for score, _ in selected_tokens))
+        # eow_count > 0 adds the end-of-word pseudo-count to the normalizer so the initial piece probabilities
+        # already carry the (1 - phi_eow) factor. Initial scores are freq*len, not pretoken counts, so this is approximate.
+        log_sum_scores = math.log(sum(score for score, _ in selected_tokens) + eow_count)
         return [
             UnigramToken(
                 atomic_tokens=token_array(atomic_token_seq),
@@ -202,7 +240,9 @@ class UnigramTrainer(BaseTrainer):
             if t not in substring_freq:
                 substring_freq[t] = 0
         all_tokens = [(max(freq, 1) * len(token), token) for token, freq in substring_freq.items()]
-        tokens = self.init_vocab_normalize_scores(all_tokens, len(atomic_tokens) + additional_num_tokens)
+        tokens = self.init_vocab_normalize_scores(
+            all_tokens, len(atomic_tokens) + additional_num_tokens, eow_count=self.eow_count
+        )
         self.logger.info(
             f"🌱 Selected {len(self.pretokenizer.atomic_tokens):,} + {self.config.additional_vocab_size * self.config.initial_vocab_factor:,} = {len(tokens):,} initial tokens from {len(all_tokens):,} candidates"
         )
@@ -241,14 +281,19 @@ class UnigramTrainer(BaseTrainer):
             self.log_examples(removed_tokens, "expected count")
             model = UnigramModel(self.pretokenizer, filtered_tokens)
         expected_count = {k: max(self.MIN_EXPECTED_COUNT, v) for k, v in expected_count.items()}
-        total_freq = sum(expected_count[t.id] for t in model.tokens.values())
+        # self.eow_count is 0 unless length_prior == "eow", in which case the normalizer includes the EOW outcome.
+        total_freq = sum(expected_count[t.id] for t in model.tokens.values()) + self.eow_count
         if self.config.m_step_digamma:
             log_total = digamma(total_freq)
             for t in model.tokens.values():
                 t.log_prob = digamma(expected_count[t.id]) - log_total
+            if self.eow_count > 0:
+                self.eow_log_prob = float(digamma(self.eow_count) - log_total)
         else:
             for t in model.tokens.values():
                 t.log_prob = math.log(expected_count[t.id] / total_freq)
+            if self.eow_count > 0:
+                self.eow_log_prob = math.log(self.eow_count / total_freq)
         return model, num_removed
 
     def score_based_prune(self, model: UnigramModel, target_size: int) -> tuple[UnigramModel, int]:
@@ -312,6 +357,8 @@ class UnigramTrainer(BaseTrainer):
             for token in viterbi_path:
                 token_count[token.id] += count
         total_count = sum(token_count.values())
+        # The EOW outcome is part of the categorical: it is in the normalizer of every probability below.
+        total_count += self.eow_count
         log_total = math.log(total_count) if total_count > 0 else float("-inf")
         candidates = []
         new_tokens = []
@@ -329,7 +376,12 @@ class UnigramTrainer(BaseTrainer):
             logprob_token = math.log(token_count[token.id]) - log_total
             logsum_alt = math.log(total_count + token_count[token.id] * (len(alt_path) - 1))
             logprob_alt = sum(math.log(token_count[alt.id] + token_count[token.id]) - logsum_alt for alt in alt_path)
-            loss = (token_count[token.id] / total_count) * (logprob_token - logprob_alt)
+            # Compare effective log-probs, i.e. with the per-token penalty lambda subtracted per arc: the token costs
+            # lambda once, its alternative k*lambda. Loss = (c/total) * ((lp_v - lambda) - (lp_alt - k*lambda))
+            # = unpenalized loss + (c/total) * lambda * (k-1), so tokens that save tokens are harder to prune.
+            effective_logprob_token = logprob_token - token_bias
+            effective_logprob_alt = logprob_alt - token_bias * len(alt_path)
+            loss = (token_count[token.id] / total_count) * (effective_logprob_token - effective_logprob_alt)
             defended = any(alt.id in unused_token_ids for alt in alt_path)
             candidates.append((token, loss, defended))
         candidates.sort(key=lambda x: -x[1])
