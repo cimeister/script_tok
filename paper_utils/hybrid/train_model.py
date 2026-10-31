@@ -111,6 +111,7 @@ def train(
     skip_substring: bool = False,
     length_prior: str = "none",
     prior_lambda: float = 0.0,
+    checkpoint: bool = False,
 ) -> None:
     logger = create_logger("train_model", verbose=True)
     model_path = get_model_path(
@@ -174,6 +175,8 @@ def train(
     else:
         params = _unigram_params(method, length_prior, prior_lambda)
         cfg = UnigramTrainerConfig(additional_vocab_size=additional_vocab_size, num_workers=num_workers, **params)
+        if checkpoint:
+            cfg.checkpoint_path = str(model_path) + ".ckpt"
         if overshoot_factor is not None:
             bpe_vocab_size = int(additional_vocab_size * overshoot_factor)
             bpe_model = get_or_train_bpe(
@@ -215,6 +218,8 @@ def main():
                              "geometric = fixed per-token penalty --prior-lambda)")
     parser.add_argument("--prior-lambda", type=float, default=0.0,
                         help="per-token penalty for --length-prior geometric (must be > 0 there, 0 otherwise)")
+    parser.add_argument("--checkpoint", action="store_true",
+                        help="unigram methods only: write/resume a checkpoint next to the model file after each prune round")
     args = parser.parse_args()
 
     if args.method in ("bpe_init", "bpe_init_fsp", "mingram") and args.overshoot_factor is None:
@@ -232,6 +237,7 @@ def main():
         args.skip_substring,
         args.length_prior,
         args.prior_lambda,
+        args.checkpoint,
     )
 
 

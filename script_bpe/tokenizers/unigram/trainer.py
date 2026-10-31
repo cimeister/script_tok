@@ -1,8 +1,11 @@
 from __future__ import annotations
 from typing import Literal, Sequence
 
+import hashlib
 import heapq
+import json
 import math
+import os
 from collections import defaultdict
 
 from scipy.special import digamma
@@ -53,6 +56,8 @@ class UnigramTrainerConfig(TrainerConfig):
     #   "none": legacy behaviour; "eow": geometric prior with learned parameter via an end-of-word outcome of the
     #   categorical; "geometric": fixed per-token penalty lambda = token_bias.
     length_prior: Literal["none", "eow", "geometric"] = "none"
+    # If set, a checkpoint is written here after every prune round and training resumes from it if it exists.
+    checkpoint_path: str | None = None
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     @model_validator(mode="after")
@@ -70,6 +75,10 @@ class UnigramTrainerConfig(TrainerConfig):
 
 class UnigramTrainer(BaseTrainer):
     MIN_EXPECTED_COUNT: float = 0.01
+    CHECKPOINT_VERSION = "unigram-trainer-checkpoint-v1"
+    CHECKPOINT_KEY = "trainer_checkpoint"
+    # Config fields that do not influence the trained model and may differ between the original and resumed run.
+    CHECKPOINT_IGNORED_CONFIG = {"forced_initial_vocab", "checkpoint_path", "verbose", "num_workers"}
 
     def __init__(self, pretokenizer: Pretokenizer, corpus: PretokenizedCorpus, config: UnigramTrainerConfig):
         super().__init__(pretokenizer, corpus, config)
@@ -83,19 +92,25 @@ class UnigramTrainer(BaseTrainer):
 
     def train(self) -> UnigramModel:
         cfg = self.config
-        vocab, initial_vocab_size = self.make_initial_vocab()
+        if cfg.checkpoint_path and isinstance(cfg.init_vocab_algo, tuple):
+            raise ValueError("checkpoint_path is not supported with a tuple init_vocab_algo (no-pretokenizer hack).")
+        # Training mutates the forced initial tokens in place (M-step log_probs), so fix the identity before it starts.
+        self.run_identity = self.checkpoint_identity() if cfg.checkpoint_path else None
         total_pretokens = sum(freq for _, freq in self.corpus)
         corpus_atomic_length = sum(len(atomic_token_seq) * freq for atomic_token_seq, freq in self.corpus)
         prune_to_vocab_size = int(
             len(self.pretokenizer.atomic_tokens) + cfg.additional_vocab_size * cfg.pre_final_vocab_factor
         )
         final_vocab_size = len(self.pretokenizer.atomic_tokens) + cfg.additional_vocab_size
-        totals_removed = defaultdict(list)
-        defended_token_ids = set()
 
-        model = UnigramModel(self.pretokenizer, vocab)
+        if cfg.checkpoint_path and os.path.exists(cfg.checkpoint_path):
+            model, start_iter, totals_removed, defended_token_ids, initial_vocab_size = self.load_checkpoint()
+        else:
+            vocab, initial_vocab_size = self.make_initial_vocab()
+            model = UnigramModel(self.pretokenizer, vocab)
+            start_iter, totals_removed, defended_token_ids = 0, defaultdict(list), set()
 
-        for iter in range(cfg.max_iterations):
+        for iter in range(start_iter, cfg.max_iterations):
             for sub_iter in range(cfg.num_sub_iterations):
                 self.logger.info(f"🔄 EM Iteration {iter + 1}.{sub_iter + 1}. Model size {len(model.tokens):,}")
                 expected_count, objective, total_tokens = self.run_e_step(model, corpus_atomic_length)
@@ -117,6 +132,8 @@ class UnigramTrainer(BaseTrainer):
             totals_removed["Prune/Zero Count"].append(num_unused)
             totals_removed["Prune/Loss"].append(num_pruned)
             defended_token_ids.update(t.id for t, _ in defended_tokens)
+            if cfg.checkpoint_path:
+                self.write_checkpoint(model, iter + 1, totals_removed, defended_token_ids, initial_vocab_size)
 
         model, finalize_removed = self.finalize_tokens(model, final_vocab_size)
         totals_removed["Finalize"].append(finalize_removed)
@@ -161,9 +178,76 @@ class UnigramTrainer(BaseTrainer):
             model.token_bias = cfg.token_bias
         model.metadata = {
             **stats,
-            "config": self.config.model_dump(exclude={"forced_initial_vocab"}),
+            "config": self.config.model_dump(exclude={"forced_initial_vocab", "checkpoint_path"}),
         }
         return model
+
+    # ---- Checkpointing ----
+    def checkpoint_identity(self) -> dict:
+        """Everything that must match between the run that wrote a checkpoint and the run that resumes it."""
+        forced = self.config.forced_initial_vocab
+        forced_repr = (
+            None if forced is None else [(t.id, list(t.atomic_tokens), t.log_prob, t.required) for t in forced]
+        )
+        identity = {
+            "config": self.config.model_dump(exclude=self.CHECKPOINT_IGNORED_CONFIG),
+            "forced_initial_vocab_sha1": None
+            if forced is None
+            else hashlib.sha1(repr(forced_repr).encode()).hexdigest(),
+            "corpus_name": self.corpus.name,
+            "corpus_metadata": self.corpus.metadata,
+            "pretokenizer_hash": self.pretokenizer.hash(),
+        }
+        return json.loads(json.dumps(identity))  # normalise tuples etc. exactly as a save/load round trip would
+
+    def write_checkpoint(self, model, next_iter, totals_removed, defended_token_ids, initial_vocab_size):
+        """Save the model (UnigramModel format) with the loop state embedded in its metadata, atomically."""
+        path = self.config.checkpoint_path
+        state = {
+            "version": self.CHECKPOINT_VERSION,
+            "identity": self.run_identity,
+            "next_iter": next_iter,
+            "totals_removed": totals_removed,
+            "defended_token_ids": sorted(defended_token_ids),
+            "initial_vocab_size": initial_vocab_size,
+            "required_ids": [t.id for t in model.tokens.values() if t.required],  # not part of UnigramToken.to_dict
+        }
+        old_metadata, model.metadata = model.metadata, {self.CHECKPOINT_KEY: state}
+        try:
+            model.save(path + ".tmp")
+        finally:
+            model.metadata = old_metadata
+        os.replace(path + ".tmp", path)
+        self.logger.info(f"💾 Checkpoint after prune round {next_iter} written to {path}")
+
+    def load_checkpoint(self):
+        path = self.config.checkpoint_path
+        loaded = UnigramModel.load(path)
+        state = loaded.metadata.get(self.CHECKPOINT_KEY)
+        if state is None or state.get("version") != self.CHECKPOINT_VERSION:
+            raise ValueError(f"{path} is not a {self.CHECKPOINT_VERSION} checkpoint.")
+        expected = self.run_identity
+        if state["identity"] != expected:
+            saved = state["identity"]
+            diff = [k for k in expected if k != "config" and saved.get(k) != expected[k]]
+            diff += [f"config.{k}" for k in expected["config"] if saved["config"].get(k) != expected["config"][k]]
+            raise ValueError(f"Checkpoint {path} does not match the current run; differing entries: {diff}.")
+        required_ids = set(state["required_ids"])
+        tokens = [
+            UnigramToken(
+                id=t.id, atomic_tokens=token_array(t.atomic_tokens), log_prob=t.log_prob, required=t.id in required_ids
+            )
+            for t in loaded.tokens.values()
+        ]
+        model = UnigramModel(self.pretokenizer, tokens)
+        self.logger.info(f"⏩ Resuming from {path}: prune round {state['next_iter']} done, model size {len(tokens):,}")
+        return (
+            model,
+            state["next_iter"],
+            defaultdict(list, state["totals_removed"]),
+            set(state["defended_token_ids"]),
+            state["initial_vocab_size"],
+        )
 
     # ---- Helper methods ----
     def log_examples(self, tokens_with_scores: list[tuple[UnigramToken, float]], score_label="score", n=5):
