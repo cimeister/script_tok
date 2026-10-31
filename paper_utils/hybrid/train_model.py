@@ -88,6 +88,7 @@ def train(
     num_workers: int,
     prune_criterion: str = "usage_count",
     skip_substring: bool = False,
+    checkpoint: bool = False,
 ) -> None:
     logger = create_logger("train_model", verbose=True)
     model_path = get_model_path(
@@ -142,6 +143,8 @@ def train(
     else:
         params = dict(_UNIGRAM_PARAMS[method])
         cfg = UnigramTrainerConfig(additional_vocab_size=additional_vocab_size, num_workers=num_workers, **params)
+        if checkpoint:
+            cfg.checkpoint_path = str(model_path) + ".ckpt"
         if overshoot_factor is not None:
             bpe_vocab_size = int(additional_vocab_size * overshoot_factor)
             bpe_model = get_or_train_bpe(
@@ -178,6 +181,8 @@ def main():
                         help="mingram only: 'mi' = careful MinGram-PP prune (vs default usage-count)")
     parser.add_argument("--skip-substring", action="store_true",
                         help="mingram mi only: skip dropping a token that is a substring of an already-dropped one in the batch (Craig Schmidt, pers. comm.)")
+    parser.add_argument("--checkpoint", action="store_true",
+                        help="unigram methods only: write/resume a checkpoint next to the model file after each prune round")
     args = parser.parse_args()
 
     if args.method in ("bpe_init", "bpe_init_fsp", "mingram") and args.overshoot_factor is None:
@@ -193,6 +198,7 @@ def main():
         args.num_workers,
         args.prune_criterion,
         args.skip_substring,
+        args.checkpoint,
     )
 
 
