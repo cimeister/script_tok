@@ -1,6 +1,7 @@
 from pathlib import Path
 import json
 import math
+import os
 
 from paper_utils.hybrid.train_hybrid import get_model_path as get_hybrid_model_path
 from paper_utils.unigram.train_hyperparameters import (
@@ -22,6 +23,10 @@ UNIGRAM_RESULTS_DIR = REPO_ROOT / "results/unigram_sweeps"
 UNIGRAM_SCRIPTENC_RESULTS_DIR = UNIGRAM_RESULTS_DIR / "scriptenc_cb"
 
 DEFAULT_OVERSHOOT_FACTOR = 1.1
+# Suffix appended to the FineWeb training-corpus names the paper generators look up
+# (e.g. "_quick" to read tokenizers trained on the fineweb_<lang>_5gb_quick sample).
+# Empty (the default) reproduces the paper's reservoir-sampled corpora.
+TRAIN_CORPUS_SUFFIX = os.environ.get("MINGRAM_TRAIN_CORPUS_SUFFIX", "")
 FSP_OVERRIDES = {"flat_score_prune": True, "pre_final_vocab_factor": 1.0}
 FSP_PARAMS = {**DEFAULTS, **FSP_OVERRIDES}
 MORPHALIGN_SCORE_SCALE = 100.0

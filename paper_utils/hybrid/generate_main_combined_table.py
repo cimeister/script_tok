@@ -23,7 +23,7 @@ from pathlib import Path
 from paper_utils.hybrid.train_hybrid import get_model_path as get_hybrid_model_path
 from paper_utils.hybrid.train_mingram import get_model_path as get_mingram_model_path
 from paper_utils.hybrid.train_pathpiece import get_model_path as get_pathpiece_model_path
-from paper_utils.hybrid.utils import FSP_OVERRIDES, geomean, morphalign_paper_score, paper_table_path
+from paper_utils.hybrid.utils import FSP_OVERRIDES, geomean, morphalign_paper_score, paper_table_path, TRAIN_CORPUS_SUFFIX
 from paper_utils.unigram.train_hyperparameters import DEFAULTS
 
 REPO_ROOT = Path(__file__).parents[2]
@@ -89,12 +89,12 @@ LANG_LABEL = {
 }
 
 TRAIN_CORPUS_BY_LANG = {
-    "eng": "fineweb_en_5gb",
-    "deu": "fineweb_de_5gb",
-    "fin": "fineweb_fi_5gb",
-    "rus": "fineweb_ru_5gb",
-    "arb": "fineweb_ar_5gb",
-    "kor": "fineweb_ko_5gb",
+    "eng": f"fineweb_en_5gb{TRAIN_CORPUS_SUFFIX}",
+    "deu": f"fineweb_de_5gb{TRAIN_CORPUS_SUFFIX}",
+    "fin": f"fineweb_fi_5gb{TRAIN_CORPUS_SUFFIX}",
+    "rus": f"fineweb_ru_5gb{TRAIN_CORPUS_SUFFIX}",
+    "arb": f"fineweb_ar_5gb{TRAIN_CORPUS_SUFFIX}",
+    "kor": f"fineweb_ko_5gb{TRAIN_CORPUS_SUFFIX}",
 }
 
 def _compression_row(grid: dict, method: str) -> dict[str, float | None]:

@@ -15,6 +15,7 @@ import seaborn as sns
 
 from paper_utils.hybrid.train_hybrid import OVERSHOOT_FACTORS, get_model_path as get_hybrid_model_path
 from paper_utils.hybrid.utils import (
+    TRAIN_CORPUS_SUFFIX,
     FSP_OVERRIDES,
     FSP_PARAMS,
     load_cache,
@@ -48,21 +49,21 @@ LANGUAGE_CONFIGS = [
     {
         "lang": "eng",
         "label": "English",
-        "train_corpus": "fineweb_en_5gb",
+        "train_corpus": f"fineweb_en_5gb{TRAIN_CORPUS_SUFFIX}",
         "eval_corpus": "eng_latn_fishfood",
         "gold_file": MORPH_TOK_EVAL_DIR / "data/morpho/eng-unimorph2uniseg_CELEX.tsv",
     },
     {
         "lang": "deu",
         "label": "German",
-        "train_corpus": "fineweb_de_5gb",
+        "train_corpus": f"fineweb_de_5gb{TRAIN_CORPUS_SUFFIX}",
         "eval_corpus": "deu_latn_fishfood",
         "gold_file": MORPH_TOK_EVAL_DIR / "data/morpho/deu-unimorph2uniseg_CELEX.tsv",
     },
     {
         "lang": "fin",
         "label": "Finnish",
-        "train_corpus": "fineweb_fi_5gb",
+        "train_corpus": f"fineweb_fi_5gb{TRAIN_CORPUS_SUFFIX}",
         "eval_corpus": "fin_latn_fishfood",
         # MorphyNet→UniSegments morpheme segmentation (matches the eng/deu CELEX
         # methodology and the morph-tok-eval paper). The raw fin-unimorph.tsv dump

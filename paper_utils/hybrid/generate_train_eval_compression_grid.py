@@ -20,7 +20,7 @@ from paper_utils.hybrid.train_mingram import (
     get_model_path as get_mingram_model_path,
 )
 from paper_utils.hybrid.train_pathpiece import get_model_path as get_pathpiece_model_path
-from paper_utils.hybrid.utils import FSP_OVERRIDES, FSP_PARAMS, load_cache, paper_figure_path, save_cache
+from paper_utils.hybrid.utils import FSP_OVERRIDES, FSP_PARAMS, load_cache, paper_figure_path, save_cache, TRAIN_CORPUS_SUFFIX
 from paper_utils.unigram.train_hyperparameters import DEFAULTS, get_model_path as get_unigram_model_path
 from script_bpe.corpus.registry import load_corpus_by_name
 from script_bpe.tokenizers.bpe import BPETokenizer
@@ -50,9 +50,9 @@ LANGUAGE_CONFIGS = [
         "label": "English",
         "finewiki_train": "finewiki_en_1gb",
         "finewiki_eval": "finewiki_en_1gb",
-        "fineweb_train": "fineweb_en_5gb",
+        "fineweb_train": f"fineweb_en_5gb{TRAIN_CORPUS_SUFFIX}",
         "fishfood_train": "eng_latn_fishfood",
-        "fineweb_eval": "fineweb_en_5gb",
+        "fineweb_eval": f"fineweb_en_5gb{TRAIN_CORPUS_SUFFIX}",
         "eval_fishfood": "eng_latn_fishfood",
         "eval_flores_plus": "flores_plus_eng_latn",
     },
@@ -61,9 +61,9 @@ LANGUAGE_CONFIGS = [
         "label": "German",
         "finewiki_train": "finewiki_de_1gb",
         "finewiki_eval": "finewiki_de_1gb",
-        "fineweb_train": "fineweb_de_5gb",
+        "fineweb_train": f"fineweb_de_5gb{TRAIN_CORPUS_SUFFIX}",
         "fishfood_train": "deu_latn_fishfood",
-        "fineweb_eval": "fineweb_de_5gb",
+        "fineweb_eval": f"fineweb_de_5gb{TRAIN_CORPUS_SUFFIX}",
         "eval_fishfood": "deu_latn_fishfood",
         "eval_flores_plus": "flores_plus_deu_latn",
     },
@@ -72,9 +72,9 @@ LANGUAGE_CONFIGS = [
         "label": "Finnish",
         "finewiki_train": "finewiki_fi_1gb",
         "finewiki_eval": "finewiki_fi_1gb",
-        "fineweb_train": "fineweb_fi_5gb",
+        "fineweb_train": f"fineweb_fi_5gb{TRAIN_CORPUS_SUFFIX}",
         "fishfood_train": "fin_latn_fishfood",
-        "fineweb_eval": "fineweb_fi_5gb",
+        "fineweb_eval": f"fineweb_fi_5gb{TRAIN_CORPUS_SUFFIX}",
         "eval_fishfood": "fin_latn_fishfood",
         "eval_flores_plus": "flores_plus_fin_latn",
     },
@@ -83,9 +83,9 @@ LANGUAGE_CONFIGS = [
         "label": "Russian",
         "finewiki_train": "finewiki_ru_1gb",
         "finewiki_eval": "finewiki_ru_1gb",
-        "fineweb_train": "fineweb_ru_5gb",
+        "fineweb_train": f"fineweb_ru_5gb{TRAIN_CORPUS_SUFFIX}",
         "fishfood_train": "rus_cyrl_fishfood",
-        "fineweb_eval": "fineweb_ru_5gb",
+        "fineweb_eval": f"fineweb_ru_5gb{TRAIN_CORPUS_SUFFIX}",
         "eval_fishfood": "rus_cyrl_fishfood",
         "eval_flores_plus": "flores_plus_rus_cyrl",
     },
@@ -94,9 +94,9 @@ LANGUAGE_CONFIGS = [
         "label": "Arabic",
         "finewiki_train": "finewiki_ar_1gb",
         "finewiki_eval": "finewiki_ar_1gb",
-        "fineweb_train": "fineweb_ar_5gb",
+        "fineweb_train": f"fineweb_ar_5gb{TRAIN_CORPUS_SUFFIX}",
         "fishfood_train": "arb_arab_fishfood",
-        "fineweb_eval": "fineweb_ar_5gb",
+        "fineweb_eval": f"fineweb_ar_5gb{TRAIN_CORPUS_SUFFIX}",
         "eval_fishfood": "arb_arab_fishfood",
         "eval_flores_plus": "flores_plus_arb_arab",
     },
@@ -105,9 +105,9 @@ LANGUAGE_CONFIGS = [
         "label": "Korean",
         "finewiki_train": "finewiki_ko_1gb",
         "finewiki_eval": "finewiki_ko_1gb",
-        "fineweb_train": "fineweb_ko_5gb",
+        "fineweb_train": f"fineweb_ko_5gb{TRAIN_CORPUS_SUFFIX}",
         "fishfood_train": "kor_hang_fishfood",
-        "fineweb_eval": "fineweb_ko_5gb",
+        "fineweb_eval": f"fineweb_ko_5gb{TRAIN_CORPUS_SUFFIX}",
         "eval_fishfood": "kor_hang_fishfood",
         "eval_flores_plus": "flores_plus_kor_hang",
     },
@@ -488,7 +488,8 @@ def plot_bars(resolved: dict[str, dict], out_png: Path, shown_keys: list[str] | 
     sns.set_context("paper", font_scale=1.05)
 
     keys = shown_keys if shown_keys is not None else SHOWN_PAIRINGS
-    shown = [p for p in PAIRINGS if p["key"] in keys]
+    # A --pairings run resolves only the requested pairings; plot just those.
+    shown = [p for p in PAIRINGS if p["key"] in keys and p["key"] in resolved]
     n = len(shown)
     ncols = 3 if n >= 3 else n
     nrows = (n + ncols - 1) // ncols
