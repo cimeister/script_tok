@@ -33,7 +33,7 @@ FSP_PARAMS = {**DEFAULTS, **FSP_OVERRIDES}
 # Length-prior Unigram variants (trained with train_model.py --method default --length-prior ...).
 # Per-token penalties lambda for the "geometric" variant; placeholder value, to be chosen. Several values
 # can be listed to plot them side by side (method keys then get the lambda appended, see geo_method_key).
-GEO_LAMBDAS: list[float] = [1.0]
+GEO_LAMBDAS: list[float] = [0.5, 1.0, 2.0, 4.0, 8.0]
 EOW_METHOD_KEY = "unigram_eow"
 EOW_PARAMS = {**DEFAULTS, "length_prior": "eow"}
 
